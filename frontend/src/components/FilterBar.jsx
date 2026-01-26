@@ -33,7 +33,6 @@ const FilterBar = ({
   onSavePreviousFilters,
   showConfirm,
   filteredCount,
-  triggerOpenFilterMenu,
 }) => {
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
   const [sortDropdownAlignRight, setSortDropdownAlignRight] = useState(false);
@@ -317,20 +316,6 @@ const FilterBar = ({
     setSortDropdownOpen(false);
     setActiveFilterId(null);
   };
-
-  // Handle external trigger to open filter menu (e.g., from keyboard shortcut)
-  useEffect(() => {
-    if (triggerOpenFilterMenu && !filterMenuOpen) {
-      setFilterMenuOpen(true);
-      if (filterMenuButtonRef.current) {
-        const rect = filterMenuButtonRef.current.getBoundingClientRect();
-        const position = calculateFixedDropdownPosition(rect, 320);
-        setFilterMenuAlignRight(position.alignRight);
-      }
-      setSortDropdownOpen(false);
-      setActiveFilterId(null);
-    }
-  }, [triggerOpenFilterMenu, filterMenuOpen]);
 
   const handleColumnsClick = () => {
     if (onColumnCustomizerOpen) {

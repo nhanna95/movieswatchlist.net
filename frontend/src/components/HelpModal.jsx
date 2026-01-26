@@ -69,11 +69,11 @@ const HelpModal = ({ onClose }) => {
                 </p>
               </div>
               <div className="help-feature">
-                <h4 className="help-feature-title">View Statistics</h4>
+                <h4 className="help-feature-title">Profile Export & Import</h4>
                 <p className="help-feature-description">
-                  Access the statistics dashboard to see comprehensive analytics about your
-                  collection, including year distribution, genre breakdown, country statistics, and
-                  more. Statistics update based on your current filters.
+                  Export your complete profile including all movies, favorites, settings, and
+                  preferences to a ZIP file. Import it later to restore everything on a new device
+                  or after clearing data. <strong>Important: Since an account system is still in the works, you must export and import your profile between uses to keep your preferences and data.</strong>
                 </p>
               </div>
               <div className="help-feature">
@@ -81,6 +81,14 @@ const HelpModal = ({ onClose }) => {
                 <p className="help-feature-description">
                   Mark movies as favorites and track which movies you've already seen. Use these
                   filters to quickly find unwatched favorites or discover new movies.
+                </p>
+              </div>
+              <div className="help-feature">
+                <h4 className="help-feature-title">View Statistics</h4>
+                <p className="help-feature-description">
+                  Access the statistics dashboard to see comprehensive analytics about your
+                  collection, including year distribution, genre breakdown, country statistics, and
+                  more. Statistics update based on your current filters.
                 </p>
               </div>
               <div className="help-feature">
@@ -138,14 +146,6 @@ const HelpModal = ({ onClose }) => {
                 <p className="help-feature-description">
                   Customize which columns are visible in your movie list and reorder them to match
                   your preferences. Access column customization from the Settings menu.
-                </p>
-              </div>
-              <div className="help-feature">
-                <h4 className="help-feature-title">Profile Export & Import</h4>
-                <p className="help-feature-description">
-                  Export your complete profile including all movies, favorites, settings, and
-                  preferences to a ZIP file. Import it later to restore everything on a new device
-                  or after clearing data.
                 </p>
               </div>
               <div className="help-feature">
@@ -212,9 +212,9 @@ const HelpModal = ({ onClose }) => {
                 >
                   <span className="help-link-icon">🐛</span>
                   <div className="help-link-content">
-                    <span className="help-link-title">Report a Bug</span>
+                    <span className="help-link-title">Report a Bug or Suggest a Feature</span>
                     <span className="help-link-description">
-                      Found an issue? Report it on GitHub
+                      Found an issue or have a feature idea? Report it on GitHub
                     </span>
                   </div>
                 </a>
