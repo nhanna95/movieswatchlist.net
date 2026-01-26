@@ -278,25 +278,35 @@ export const previewCSV = async (file) => {
   // Create a new axios instance without default Content-Type header for FormData
   // axios will automatically set multipart/form-data with boundary when it detects FormData
   const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-  const response = await fetch(`${API_BASE_URL}/api/preview-csv`, {
-    method: 'POST',
-    body: formData,
-    // Don't set Content-Type - browser will set it with boundary automatically
-  });
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/preview-csv`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+      // Don't set Content-Type - browser will set it with boundary automatically
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    let errorMessage = `HTTP error! status: ${response.status}`;
-    try {
-      const errorJson = JSON.parse(errorText);
-      errorMessage = errorJson.detail || errorMessage;
-    } catch (e) {
-      errorMessage = errorText || errorMessage;
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.detail || errorMessage;
+      } catch (e) {
+        errorMessage = errorText || errorMessage;
+      }
+      throw new Error(errorMessage);
     }
-    throw new Error(errorMessage);
-  }
 
-  return await response.json();
+    return await response.json();
+  } catch (error) {
+    // Handle network errors (CORS, connection refused, etc.)
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      throw new Error(`Failed to connect to backend at ${API_BASE_URL}. Please check CORS configuration and ensure the backend is running.`);
+    }
+    throw error;
+  }
 };
 
 export const processCSVWithSelections = async (file, selections) => {
