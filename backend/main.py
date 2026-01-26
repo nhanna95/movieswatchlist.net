@@ -38,12 +38,14 @@ else:
 
 logger.info(f"CORS allowed origins: {allowed_origins}")
 
+# Add CORS middleware BEFORE including routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include routes

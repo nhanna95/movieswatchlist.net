@@ -607,6 +607,11 @@ async def process_csv(db: Session = Depends(get_db)):
         }
     )
 
+@router.options("/api/preview-csv")
+async def preview_csv_options():
+    """Handle CORS preflight for preview-csv endpoint"""
+    return {"message": "OK"}
+
 @router.post("/api/preview-csv")
 async def preview_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
