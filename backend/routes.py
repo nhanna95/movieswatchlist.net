@@ -97,7 +97,13 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     Get current user information.
     Requires authentication.
     """
-    return current_user
+    # Convert SQLAlchemy model to Pydantic model
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        schema_name=current_user.schema_name,
+        created_at=current_user.created_at
+    )
 
 
 @router.post("/api/auth/logout")
