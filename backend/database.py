@@ -9,7 +9,14 @@ import re
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Configure connect_args based on database type
+# SQLite requires check_same_thread=False, PostgreSQL doesn't need it
+connect_args = {}
+is_postgresql = DATABASE_URL.startswith("postgresql")
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
@@ -81,8 +88,9 @@ def migrate_db():
         if 'is_favorite' not in columns:
             logger.info("Adding is_favorite column to movies table")
             with engine.connect() as conn:
-                # SQLite doesn't support boolean, store as integer 0/1
-                conn.execute(text("ALTER TABLE movies ADD COLUMN is_favorite INTEGER DEFAULT 0"))
+                # Use BOOLEAN for PostgreSQL, INTEGER for SQLite
+                column_type = "BOOLEAN DEFAULT FALSE" if is_postgresql else "INTEGER DEFAULT 0"
+                conn.execute(text(f"ALTER TABLE movies ADD COLUMN is_favorite {column_type}"))
                 conn.commit()
             logger.info("Successfully added is_favorite column")
         else:
@@ -92,8 +100,9 @@ def migrate_db():
         if 'seen_before' not in columns:
             logger.info("Adding seen_before column to movies table")
             with engine.connect() as conn:
-                # SQLite doesn't support boolean, store as integer 0/1
-                conn.execute(text("ALTER TABLE movies ADD COLUMN seen_before INTEGER DEFAULT 0"))
+                # Use BOOLEAN for PostgreSQL, INTEGER for SQLite
+                column_type = "BOOLEAN DEFAULT FALSE" if is_postgresql else "INTEGER DEFAULT 0"
+                conn.execute(text(f"ALTER TABLE movies ADD COLUMN seen_before {column_type}"))
                 conn.commit()
             logger.info("Successfully added seen_before column")
         else:
@@ -115,8 +124,9 @@ def migrate_db():
             if column_name not in columns:
                 logger.info(f"Adding {column_name} column to movies table")
                 with engine.connect() as conn:
-                    # SQLite doesn't support boolean, store as integer 0/1
-                    conn.execute(text(f"ALTER TABLE movies ADD COLUMN {column_name} INTEGER DEFAULT 0"))
+                    # Use BOOLEAN for PostgreSQL, INTEGER for SQLite
+                    column_type = "BOOLEAN DEFAULT FALSE" if is_postgresql else "INTEGER DEFAULT 0"
+                    conn.execute(text(f"ALTER TABLE movies ADD COLUMN {column_name} {column_type}"))
                     conn.commit()
                 logger.info(f"Successfully added {column_name} column")
             else:
@@ -125,36 +135,16 @@ def migrate_db():
         logger.info("Movies table does not exist, will be created by init_db()")
     
     # Check if favorite_directors table exists
+    # Note: Tables are created by SQLAlchemy models, but we check for migration compatibility
     if 'favorite_directors' not in inspector.get_table_names():
-        logger.info("Creating favorite_directors table")
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE favorite_directors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    director_name TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_favorite_directors_director_name ON favorite_directors(director_name)"))
-            conn.commit()
-        logger.info("Successfully created favorite_directors table")
+        logger.info("favorite_directors table will be created by SQLAlchemy models")
     else:
         logger.debug("favorite_directors table already exists")
     
     # Check if seen_countries table exists
+    # Note: Tables are created by SQLAlchemy models, but we check for migration compatibility
     if 'seen_countries' not in inspector.get_table_names():
-        logger.info("Creating seen_countries table")
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE seen_countries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    country_name TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_seen_countries_country_name ON seen_countries(country_name)"))
-            conn.commit()
-        logger.info("Successfully created seen_countries table")
+        logger.info("seen_countries table will be created by SQLAlchemy models")
     else:
         logger.debug("seen_countries table already exists")
 
