@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routes import router
 import logging
+import os
 from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -23,12 +24,23 @@ app = FastAPI(
 )
 
 # Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# Get allowed origins from environment variable, fallback to localhost for development
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    # Split comma-separated origins from environment variable
+    allowed_origins = [origin.strip() for origin in cors_origins_env.split(",")]
+else:
+    # Default to localhost for development
+    allowed_origins = [
         "http://localhost:3000",  # React dev server
         "http://127.0.0.1:3000",  # Alternative localhost
-    ],
+    ]
+
+logger.info(f"CORS allowed origins: {allowed_origins}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
