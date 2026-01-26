@@ -2885,10 +2885,21 @@ function App() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/import-profile`, {
-        method: 'POST',
-        body: formData,
-      });
+      let response;
+      try {
+        response = await fetch(`${API_BASE_URL}/api/import-profile`, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include', // Important for sending cookies/auth with cross-origin requests
+          // Don't set Content-Type - browser will set it with boundary automatically
+        });
+      } catch (fetchError) {
+        // Handle network errors (CORS, connection refused, etc.)
+        if (fetchError.name === 'TypeError' && (fetchError.message.includes('fetch') || fetchError.message.includes('Failed to fetch'))) {
+          throw new Error(`Failed to connect to backend at ${API_BASE_URL}. Please check CORS configuration and ensure the backend is running.`);
+        }
+        throw fetchError;
+      }
 
       if (!response.ok) {
         const text = await response.text();

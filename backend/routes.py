@@ -3576,6 +3576,11 @@ def process_tmdb_data_stream(db: Session, movies_to_process: List[Movie]):
     yield f"data: {json.dumps({'current': total, 'total': total, 'processed': processed_count, 'failed': failed_count, 'done': True})}\n\n"
 
 
+@router.options("/api/import-profile")
+async def import_profile_options():
+    """Handle CORS preflight for import-profile endpoint"""
+    return {"message": "OK"}
+
 @router.post("/api/import-profile")
 async def import_profile(
     file: UploadFile = File(...),
