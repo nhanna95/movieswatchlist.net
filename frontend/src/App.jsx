@@ -12,6 +12,7 @@ import DialogContainer from './components/DialogContainer';
 import { getDefaultColumns } from './components/ColumnCustomizer';
 import SettingsModal from './components/SettingsModal';
 import AddMovieModal from './components/AddMovieModal';
+import HelpModal from './components/HelpModal';
 import {
   getMovies,
   getStats,
@@ -1530,6 +1531,8 @@ function App() {
     return stored || 'US';
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
+  const [triggerOpenFilterMenu, setTriggerOpenFilterMenu] = useState(0);
   const [addMovieModalOpen, setAddMovieModalOpen] = useState(false);
   const [addMovieModalInitialData, setAddMovieModalInitialData] = useState(null);
   const [preferredServices, setPreferredServices] = useState(() => {
@@ -2476,12 +2479,15 @@ function App() {
           shortcutsHelpOpen ||
           statisticsDashboardOpen ||
           settingsModalOpen ||
+          helpModalOpen ||
           addMovieModalOpen)
       ) {
         if (shortcutsHelpOpen) {
           setShortcutsHelpOpen(false);
         } else if (settingsModalOpen) {
           setSettingsModalOpen(false);
+        } else if (helpModalOpen) {
+          setHelpModalOpen(false);
         } else if (addMovieModalOpen) {
           setAddMovieModalOpen(false);
         } else if (selectedMovie) {
@@ -2496,9 +2502,9 @@ function App() {
       }
 
       // Allow ? to open shortcuts help from anywhere
+      // Handle both '?' key and Shift+/ (which produces '?' on most keyboards)
       if (
-        event.key === '?' &&
-        !event.shiftKey &&
+        (event.key === '?' || (event.key === '/' && event.shiftKey)) &&
         !event.ctrlKey &&
         !event.metaKey &&
         !isInput &&
@@ -2517,6 +2523,7 @@ function App() {
         shortcutsHelpOpen ||
         statisticsDashboardOpen ||
         settingsModalOpen ||
+        helpModalOpen ||
         addMovieModalOpen
       ) {
         return;
@@ -2592,11 +2599,8 @@ function App() {
         switch (event.key.toLowerCase()) {
           case 'f':
             event.preventDefault();
-            // Focus filter panel - we'll need to add a way to open it
-            // For now, just focus the search
-            if (searchInputRef.current) {
-              searchInputRef.current.focus();
-            }
+            // Open filter panel
+            setTriggerOpenFilterMenu((prev) => prev + 1);
             break;
           case 's':
             event.preventDefault();
@@ -2624,6 +2628,7 @@ function App() {
     addMovieModalOpen,
     handleToggleFavorite,
     settingsModalOpen,
+    helpModalOpen,
     handleMovieClick,
   ]);
 
@@ -3563,6 +3568,48 @@ function App() {
                 <span>Import and Export</span>
               </button>
               <button
+                className="import-export-button"
+                onClick={() => setHelpModalOpen(true)}
+                title="Help"
+                aria-label="Help"
+              >
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <line
+                    x1="12"
+                    y1="17"
+                    x2="12.01"
+                    y2="17"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>Help</span>
+              </button>
+              <button
                 className="settings-button"
                 onClick={() => setSettingsModalOpen(true)}
                 title="Settings"
@@ -3751,6 +3798,49 @@ function App() {
                         />
                       </svg>
                       <span>Import and Export</span>
+                    </button>
+                    <button
+                      className="hamburger-menu-item"
+                      onClick={() => {
+                        setHelpModalOpen(true);
+                        setIsHamburgerMenuOpen(false);
+                      }}
+                    >
+                      <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <line
+                          x1="12"
+                          y1="17"
+                          x2="12.01"
+                          y2="17"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span>Help</span>
                     </button>
                     <button
                       className="hamburger-menu-item"
@@ -4058,6 +4148,7 @@ function App() {
             onSavePreviousFilters={(filters) => setPreviousFilters(filters)}
             showConfirm={showConfirm}
             filteredCount={pagination.total}
+            triggerOpenFilterMenu={triggerOpenFilterMenu}
           />
 
           <MovieList
@@ -4112,6 +4203,7 @@ function App() {
         />
       )}
       {shortcutsHelpOpen && <KeyboardShortcutsHelp onClose={() => setShortcutsHelpOpen(false)} />}
+      {helpModalOpen && <HelpModal onClose={() => setHelpModalOpen(false)} />}
       {settingsModalOpen && (
         <SettingsModal
           onClose={() => setSettingsModalOpen(false)}

@@ -24,12 +24,13 @@ const HelpModal = ({ onClose }) => {
     { key: 'Enter', description: 'Open selected movie modal' },
     { key: 'F', description: 'Toggle favorite on selected movie' },
     { key: '↑ ↓', description: 'Navigate between movies' },
-    { key: 'Ctrl/Cmd + F', description: 'Focus search bar' },
+    { key: 'Ctrl/Cmd + F', description: 'Open filter panel' },
     { key: 'Ctrl/Cmd + S', description: 'Save current filter preset' },
   ];
 
   // GitHub repository URL - update this with your actual repository
-  const GITHUB_REPO_URL = 'https://github.com/yourusername/movieswatchlist.com';
+  // Format: https://github.com/username/repository-name
+  const GITHUB_REPO_URL = 'https://github.com/nhanna95/movieswatchlist.net';
 
   return (
     <div className="help-modal-overlay" onClick={onClose}>
