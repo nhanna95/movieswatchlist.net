@@ -1,0 +1,246 @@
+.or-group-creator {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+.or-group-creator-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.or-group-creator-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.or-group-creator-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: color 0.2s;
+}
+
+.or-group-creator-close:hover {
+  color: #111827;
+}
+
+.or-group-creator-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.or-group-creator-search {
+  margin-bottom: 20px;
+}
+
+.or-group-creator-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.or-group-creator-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.or-group-creator-selected {
+  margin-bottom: 20px;
+}
+
+.or-group-creator-selected-label,
+.or-group-creator-available-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.or-group-creator-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.or-group-creator-selected-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1e40af;
+}
+
+.or-group-creator-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #1e40af;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.or-group-creator-remove:hover {
+  background-color: #dbeafe;
+}
+
+.or-group-creator-preview {
+  margin-bottom: 20px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.or-group-creator-preview-text {
+  font-size: 14px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.or-group-creator-available {
+  margin-bottom: 20px;
+}
+
+.or-group-creator-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.or-group-creator-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: none;
+  background: white;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.or-group-creator-item:last-child {
+  border-bottom: none;
+}
+
+.or-group-creator-item:hover {
+  background: #f9fafb;
+}
+
+.or-group-creator-item.selected {
+  background: #eff6ff;
+}
+
+.or-group-creator-checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #d1d5db;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.or-group-creator-item.selected .or-group-creator-checkbox {
+  border-color: #3b82f6;
+  background: #3b82f6;
+  color: white;
+}
+
+.or-group-creator-label {
+  font-size: 14px;
+  color: #111827;
+}
+
+.or-group-creator-empty {
+  padding: 20px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.or-group-creator-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.or-group-creator-cancel,
+.or-group-creator-create {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.or-group-creator-cancel {
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+.or-group-creator-cancel:hover {
+  background: #f9fafb;
+}
+
+.or-group-creator-create {
+  background: #3b82f6;
+  border: 1px solid #3b82f6;
+  color: white;
+}
+
+.or-group-creator-create:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.or-group-creator-create:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -1,0 +1,44 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Backend Server",
+            "type": "shell",
+            "command": "cd backend && ./venv/bin/python main.py",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Run Frontend Dev Server",
+            "type": "shell",
+            "command": "cd frontend && npm start",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "group": "build"
+        },
+        {
+            "label": "Run Both (Backend + Frontend)",
+            "dependsOn": [
+                "Run Backend Server",
+                "Run Frontend Dev Server"
+            ],
+            "dependsOrder": "parallel",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "group": "build"
+        }
+    ]
+}

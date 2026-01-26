@@ -1,0 +1,17 @@
+/* Reuse styles from MovieModal.css, but ensure DirectorsModal is on top */
+.modal-overlay {
+  z-index: 1100 !important;
+}
+
+.modal-loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.modal-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-style: italic;
+}

@@ -1,0 +1,236 @@
+.sort-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px var(--shadow);
+  min-width: 320px;
+  z-index: 1000;
+  padding: 12px;
+}
+
+.sort-dropdown.align-right {
+  left: auto;
+  right: 0;
+}
+
+.sort-dropdown-title {
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sort-dropdown-content {
+  margin-bottom: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.sort-dropdown-favorites-checkbox {
+  padding: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sort-dropdown-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.sort-dropdown-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+
+.sort-dropdown-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.sort-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  cursor: move;
+  transition:
+    opacity 0.2s,
+    transform 0.2s,
+    border-color 0.2s;
+}
+
+.sort-dropdown-item-dragging {
+  opacity: 0.5;
+}
+
+.sort-dropdown-item-drag-over {
+  border-top: 2px solid var(--accent-primary);
+  margin-top: 2px;
+}
+
+.sort-dropdown-drag-handle {
+  cursor: grab;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.sort-dropdown-drag-handle:active {
+  cursor: grabbing;
+}
+
+.sort-dropdown-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sort-dropdown-move {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  transition: all 0.2s;
+  width: 20px;
+  height: 20px;
+}
+
+.sort-dropdown-move:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.sort-dropdown-move:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.sort-dropdown-field,
+.sort-dropdown-order {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.sort-dropdown-field:focus,
+.sort-dropdown-order:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.sort-dropdown-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  width: 24px;
+  height: 24px;
+}
+
+.sort-dropdown-remove:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.sort-dropdown-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.sort-dropdown-add {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-dropdown-add:hover {
+  background: var(--bg-tertiary);
+}
+
+.sort-dropdown-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-dropdown-clear:hover {
+  background: var(--bg-tertiary);
+  color: var(--danger);
+}
+
+.sort-dropdown-set-default {
+  background: var(--accent-primary);
+  border: none;
+  cursor: pointer;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-weight: 500;
+}
+
+.sort-dropdown-set-default:hover {
+  background: var(--accent-hover);
+  opacity: 0.9;
+}
