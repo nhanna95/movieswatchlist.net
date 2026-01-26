@@ -299,7 +299,6 @@ export const getCountryName = (countryCode) => {
     AT: 'Austria',
     CH: 'Switzerland',
     BE: 'Belgium',
-    PT: 'Portugal',
     ZA: 'South Africa',
   };
   return countryNames[countryCode] || countryCode;
