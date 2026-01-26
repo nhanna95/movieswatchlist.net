@@ -1,5 +1,6 @@
 import axios from 'axios';
 import qs from 'qs';
+import { getToken, removeToken } from './auth';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -49,6 +50,34 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// Request interceptor to add JWT token to all requests
+api.interceptors.request.use(
+  (config) => {
+    const token = getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor to handle 401 errors (unauthorized)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token is invalid or expired - clear it
+      removeToken();
+      // Dispatch a custom event that can be listened to by the app
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const getMovies = async (params = {}) => {
   const response = await api.get('/api/movies', {
@@ -279,12 +308,16 @@ export const previewCSV = async (file) => {
   // Create a new axios instance without default Content-Type header for FormData
   // axios will automatically set multipart/form-data with boundary when it detects FormData
   const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  const token = getToken();
   
   try {
     const response = await fetch(`${API_BASE_URL}/api/preview-csv`, {
       method: 'POST',
       body: formData,
       credentials: 'include',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       // Don't set Content-Type - browser will set it with boundary automatically
     });
 
@@ -317,9 +350,13 @@ export const processCSVWithSelections = async (file, selections) => {
 
   // Returns a fetch response for streaming
   const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  const token = getToken();
   return fetch(`${API_BASE_URL}/api/process-csv-with-selections`, {
     method: 'POST',
     body: formData,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
 };
 

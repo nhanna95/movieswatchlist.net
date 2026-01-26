@@ -1,0 +1,167 @@
+.security-warning-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10001;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.security-warning-modal {
+  background: #1e1e1e;
+  border-radius: 12px;
+  padding: 32px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 2px solid #f59e0b;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.security-warning-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+  color: #f59e0b;
+}
+
+.security-warning-title {
+  margin: 0 0 20px 0;
+  font-size: 24px;
+  color: #f59e0b;
+  text-align: center;
+  font-weight: 600;
+}
+
+.security-warning-content {
+  margin-bottom: 24px;
+}
+
+.security-warning-main {
+  font-size: 16px;
+  color: #fff;
+  margin: 0 0 16px 0;
+  line-height: 1.5;
+}
+
+.security-warning-important {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #ef4444;
+  font-size: 15px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.security-warning-recommendation {
+  font-size: 14px;
+  color: #ccc;
+  margin: 0 0 16px 0;
+  line-height: 1.6;
+}
+
+.security-warning-note {
+  font-size: 13px;
+  color: #888;
+  margin: 0;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.security-warning-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 24px;
+  cursor: pointer;
+  padding: 12px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.security-warning-checkbox:hover {
+  background: #333;
+}
+
+.security-warning-checkbox input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: #4a9eff;
+}
+
+.security-warning-checkbox span {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.security-warning-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.security-warning-button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.security-warning-button.cancel {
+  background: #333;
+  color: #ccc;
+}
+
+.security-warning-button.cancel:hover {
+  background: #444;
+  color: #fff;
+}
+
+.security-warning-button.accept {
+  background: #f59e0b;
+  color: #000;
+}
+
+.security-warning-button.accept:hover:not(:disabled) {
+  background: #fbbf24;
+}
+
+.security-warning-button.accept:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

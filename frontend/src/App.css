@@ -161,6 +161,28 @@
   transform: scale(1.05);
 }
 
+.logout-button {
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  width: 44px;
+  height: 44px;
+}
+
+.logout-button:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #ef4444;
+  transform: scale(1.05);
+}
+
 .theme-toggle {
   background: var(--bg-tertiary);
   border: 2px solid var(--border-color);

@@ -13,6 +13,8 @@ import { getDefaultColumns } from './components/ColumnCustomizer';
 import SettingsModal from './components/SettingsModal';
 import AddMovieModal from './components/AddMovieModal';
 import HelpModal from './components/HelpModal';
+import AuthGuard from './components/AuthGuard';
+import { AuthProvider, useAuth } from './hooks/useAuth';
 import {
   getMovies,
   getStats,
@@ -31,6 +33,59 @@ import { filterTypes } from './components/filterTypes';
 import { formatRuntime } from './utils';
 import { detectCountry, setStoredCountry, getStoredCountry } from './utils/countryDetection';
 import './components/UploadCSV.css';
+
+// LogoutButton Component - uses the auth hook to log out
+const LogoutButton = () => {
+  const { logout, user } = useAuth();
+
+  const handleLogout = async () => {
+    if (window.confirm('Are you sure you want to log out?')) {
+      await logout();
+    }
+  };
+
+  return (
+    <button
+      className="logout-button"
+      onClick={handleLogout}
+      title={user ? `Logout (${user.username})` : 'Logout'}
+      aria-label="Logout"
+    >
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <polyline
+          points="16,17 21,12 16,7"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <line
+          x1="21"
+          y1="12"
+          x2="9"
+          y2="12"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+};
 
 // CSVPreviewModal Component
 const CSVPreviewModal = ({ previewData, initialSelections, file, onClose, onUploadSuccess }) => {
@@ -3630,6 +3685,7 @@ function App() {
                   />
                 </svg>
               </button>
+              <LogoutButton />
             </div>
             <div
               className={`header-actions-hamburger ${!showHamburgerMenu ? 'header-actions-hidden' : ''}`}
@@ -4262,4 +4318,15 @@ function App() {
   );
 }
 
-export default App;
+// Wrapper component that provides authentication context
+function AppWithAuth() {
+  return (
+    <AuthProvider>
+      <AuthGuard>
+        <App />
+      </AuthGuard>
+    </AuthProvider>
+  );
+}
+
+export default AppWithAuth;

@@ -61,6 +61,11 @@ A comprehensive movie watchlist management application that allows you to import
 - **Streaming Integration**: Check where movies are available to stream in your region
 - **Profile Export/Import**: Backup and restore your entire profile (favorites, seen countries, favorite directors, etc.)
 
+### Multi-User Support
+- **User Authentication**: JWT-based authentication with secure login/registration
+- **Data Isolation**: Each user has their own isolated database schema
+- **Per-User Data**: Movies, favorites, and settings are completely separate per user
+
 ## Tech Stack
 
 ### Backend
@@ -125,9 +130,15 @@ Create a `.env` file in the `backend` directory:
 ```env
 TMDB_API_KEY=your_tmdb_api_key_here
 DATABASE_URL=sqlite:///./watchlist.db
+
+# JWT Authentication (required for multi-user support)
+# Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET_KEY=your_secure_secret_key_here
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_HOURS=24
 ```
 
-Replace `your_tmdb_api_key_here` with your actual TMDb API key.
+Replace `your_tmdb_api_key_here` with your actual TMDb API key, and generate a secure `JWT_SECRET_KEY`.
 
 ## Running the Application
 

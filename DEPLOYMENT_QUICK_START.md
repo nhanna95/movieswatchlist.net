@@ -14,6 +14,7 @@
    - `TMDB_API_KEY` = your TMDb API key
    - `DATABASE_URL` = (copy from PostgreSQL service variables)
    - `CORS_ORIGINS` = (leave empty for now)
+   - `JWT_SECRET_KEY` = (generate with: `python -c "import secrets; print(secrets.token_hex(32))"`)
 5. Wait for deployment, copy Railway URL (e.g., `https://xxx.up.railway.app`)
 
 ### Step 3: Deploy Frontend to Vercel (2 minutes)
@@ -32,7 +33,8 @@
 3. Railway auto-redeploys
 
 ### Step 5: Test (1 minute)
-- [ ] Visit Vercel URL - app should load
+- [ ] Visit Vercel URL - app should show login screen
+- [ ] Register a new account (note the security warning)
 - [ ] Visit Railway URL - should see `{"message":"Letterboxd Watchlist API"}`
 - [ ] Try uploading a CSV in your app
 
@@ -49,12 +51,35 @@
 TMDB_API_KEY=your_key_here
 DATABASE_URL=postgresql://... (from PostgreSQL service)
 CORS_ORIGINS=https://your-app.vercel.app
+JWT_SECRET_KEY=your_secure_secret_key_here
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_HOURS=24
 ```
 
 ### Vercel (Frontend)
 ```
 REACT_APP_API_URL=https://your-backend.railway.app
 ```
+
+---
+
+## 🔐 User Authentication
+
+The app now requires user authentication. Each user gets their own isolated database schema.
+
+### For New Deployments
+1. Users can register directly from the login screen
+2. Each user's data is completely isolated in their own schema
+
+### Migrating Existing Data
+If you have existing data from a previous single-user deployment:
+
+```bash
+cd backend
+python migrate_existing_data.py --username admin --email admin@example.com --password yourpassword
+```
+
+This will create a default user and migrate all existing data to their schema.
 
 ---
 
@@ -68,6 +93,12 @@ REACT_APP_API_URL=https://your-backend.railway.app
 
 **Backend won't start?**
 → Check Railway logs, verify all environment variables are set
+
+**Authentication errors?**
+→ Ensure `JWT_SECRET_KEY` is set in Railway environment variables
+
+**Can't see data after login?**
+→ Run migration script if upgrading from single-user version
 
 ---
 
