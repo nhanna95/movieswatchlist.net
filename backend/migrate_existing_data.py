@@ -9,11 +9,10 @@ This script:
 4. Optionally cleans up the old public tables
 
 Usage:
-    python migrate_existing_data.py [--username USERNAME] [--email EMAIL] [--password PASSWORD] [--cleanup]
+    python migrate_existing_data.py [--username USERNAME] [--password PASSWORD] [--cleanup]
 
 Arguments:
     --username: Username for the default user (default: admin)
-    --email: Email for the default user (default: admin@example.com)
     --password: Password for the default user (default: password123)
     --cleanup: If specified, removes the old tables from public schema after migration
 """
@@ -52,14 +51,12 @@ def check_existing_data():
             return False
 
 
-def create_default_user(username: str, email: str, password: str):
+def create_default_user(username: str, password: str):
     """Create a default user account."""
     db = SessionLocal()
     try:
         # Check if user already exists
-        existing_user = db.query(User).filter(
-            (User.username == username) | (User.email == email)
-        ).first()
+        existing_user = db.query(User).filter(User.username == username).first()
         
         if existing_user:
             logger.info(f"User {username} already exists with ID {existing_user.id}")
@@ -71,7 +68,6 @@ def create_default_user(username: str, email: str, password: str):
         # Create user record with temporary schema name
         user = User(
             username=username,
-            email=email,
             hashed_password=hashed_password,
             schema_name=f"user_temp"
         )
@@ -249,11 +245,6 @@ def main():
         help='Username for the default user (default: admin)'
     )
     parser.add_argument(
-        '--email',
-        default='admin@example.com',
-        help='Email for the default user (default: admin@example.com)'
-    )
-    parser.add_argument(
         '--password',
         default='password123',
         help='Password for the default user (default: password123)'
@@ -278,7 +269,7 @@ def main():
     
     # Create default user
     logger.info(f"Creating default user: {args.username}")
-    user = create_default_user(args.username, args.email, args.password)
+    user = create_default_user(args.username, args.password)
     
     if has_data:
         # Migrate data to user's schema

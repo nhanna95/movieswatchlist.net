@@ -83,11 +83,11 @@ export const AuthProvider = ({ children }) => {
   /**
    * Register a new account
    */
-  const register = useCallback(async (username, email, password) => {
+  const register = useCallback(async (username, password) => {
     setLoading(true);
     setError(null);
     try {
-      await authRegister(username, email, password);
+      await authRegister(username, password);
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
       return { success: true };

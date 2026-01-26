@@ -74,15 +74,13 @@ const createAuthAxios = () => {
 /**
  * Register a new user
  * @param {string} username - Username
- * @param {string} email - Email address
  * @param {string} password - Password
  * @returns {Promise<{access_token: string, token_type: string}>}
  */
-export const register = async (username, email, password) => {
+export const register = async (username, password) => {
   try {
     const response = await axios.post(`${API_BASE_URL}/api/auth/register`, {
       username,
-      email,
       password,
     });
 
@@ -158,7 +156,7 @@ export const logout = async () => {
 
 /**
  * Fetch the current user's information
- * @returns {Promise<{id: number, username: string, email: string, schema_name: string, created_at: string}>}
+ * @returns {Promise<{id: number, username: string, schema_name: string, created_at: string}>}
  */
 export const fetchCurrentUser = async () => {
   try {

@@ -7,7 +7,6 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
   const [showSecurityWarning, setShowSecurityWarning] = useState(true);
   const [warningAccepted, setWarningAccepted] = useState(false);
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -20,11 +19,6 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
   const handleSecurityWarningCancel = () => {
     setShowSecurityWarning(false);
     onSwitchToLogin();
-  };
-
-  const validateEmail = (email) => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
   };
 
   const handleSubmit = async (e) => {
@@ -40,14 +34,6 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
       setLocalError('Username must be at least 3 characters');
       return;
     }
-    if (!email.trim()) {
-      setLocalError('Email is required');
-      return;
-    }
-    if (!validateEmail(email)) {
-      setLocalError('Please enter a valid email address');
-      return;
-    }
     if (!password) {
       setLocalError('Password is required');
       return;
@@ -61,7 +47,7 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
       return;
     }
 
-    const result = await onRegister(username, email, password);
+    const result = await onRegister(username, password);
     if (!result.success) {
       setLocalError(result.error);
     }
@@ -104,18 +90,6 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
               placeholder="Choose a username"
               disabled={loading}
               autoFocus
-            />
-          </div>
-
-          <div className="auth-field">
-            <label htmlFor="email">Email</label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter your email"
-              disabled={loading}
             />
           </div>
 

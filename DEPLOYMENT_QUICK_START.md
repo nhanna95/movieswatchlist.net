@@ -76,7 +76,7 @@ If you have existing data from a previous single-user deployment:
 
 ```bash
 cd backend
-python migrate_existing_data.py --username admin --email admin@example.com --password yourpassword
+python migrate_existing_data.py --username admin --password yourpassword
 ```
 
 This will create a default user and migrate all existing data to their schema.

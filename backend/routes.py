@@ -16,7 +16,7 @@ from auth import (
     get_current_user, get_current_user_optional,
     UserCreate, UserLogin, UserResponse, Token,
     create_user, authenticate_user, create_access_token,
-    get_user_by_username, get_user_by_email
+    get_user_by_username
 )
 import logging
 import json
@@ -55,13 +55,6 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=400,
             detail="Username already registered"
-        )
-    
-    # Check if email already exists
-    if get_user_by_email(db, user_data.email):
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
         )
     
     # Create the user (this also creates their schema)

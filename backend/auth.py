@@ -10,7 +10,7 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from config import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS
 from database import get_db
@@ -29,7 +29,6 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=Fals
 # Pydantic models for request/response
 class UserCreate(BaseModel):
     username: str
-    email: EmailStr
     password: str
 
 
@@ -51,7 +50,6 @@ class TokenData(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
-    email: str
     schema_name: str
     created_at: datetime
 
@@ -192,12 +190,6 @@ def get_user_by_username(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
 
 
-def get_user_by_email(db: Session, email: str):
-    """Get a user by email."""
-    from models import User
-    return db.query(User).filter(User.email == email).first()
-
-
 def get_user_by_id(db: Session, user_id: int):
     """Get a user by ID."""
     from models import User
@@ -227,7 +219,6 @@ def create_user(db: Session, user_data: UserCreate):
     # Create user record
     db_user = User(
         username=user_data.username,
-        email=user_data.email,
         hashed_password=hashed_password,
         schema_name=temp_schema
     )
