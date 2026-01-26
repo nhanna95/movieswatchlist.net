@@ -12,6 +12,7 @@ import logging
 import json
 import requests
 import asyncio
+import time
 from pathlib import Path
 from io import BytesIO
 from datetime import datetime
@@ -3599,39 +3600,52 @@ async def import_profile(
     Returns:
         StreamingResponse with progress updates
     """
-    try:
-        # Validate file type
-        if not file.filename or not file.filename.endswith('.zip'):
-            raise HTTPException(status_code=400, detail="File must be a ZIP file")
+    # Validate file type first (quick check before streaming)
+    if not file.filename or not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="File must be a ZIP file")
+    
+    # Stream the import process with progress updates
+    async def generate_stream():
+        import_result = None
         
-        # Read uploaded file
-        file_contents = await file.read()
-        zip_buffer = BytesIO(file_contents)
+        # Send initial message IMMEDIATELY to establish connection and prevent timeout
+        # This must be sent before any file processing to keep Railway connection alive
+        yield f"data: {json.dumps({'import_phase': 'receiving', 'message': 'Receiving profile file...'})}\n\n"
+        await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
         
-        # Extract and validate ZIP
         try:
-            json_data = extract_profile_zip(zip_buffer)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid profile file: {str(e)}")
-        
-        # Extract preferences from JSON (will be handled by frontend)
-        preferences = json_data.get("preferences", {})
-        
-        # Stream the import process with progress updates
-        async def generate_stream():
-            import_result = None
-            # Access background_tasks from outer scope for tracked lists processing
+            # Read uploaded file - read in one go (FastAPI handles streaming)
+            # Send keep-alive message before reading
+            yield f"data: {json.dumps({'import_phase': 'reading', 'message': 'Reading profile file...'})}\n\n"
+            await asyncio.sleep(0.01)
             
-            # Send initial message immediately to establish connection and prevent timeout
-            yield f"data: {json.dumps({'import_phase': 'initializing', 'message': 'Starting profile import...'})}\n\n"
-            await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
+            # Read entire file (FastAPI may have already buffered it)
+            file_contents = await file.read()
+            zip_buffer = BytesIO(file_contents)
             
+            # Send message that file is received
+            yield f"data: {json.dumps({'import_phase': 'extracting', 'message': 'Extracting profile data...'})}\n\n"
+            await asyncio.sleep(0.01)
+            
+            # Extract and validate ZIP
             try:
-                # Stream import progress - convert sync generator to async
-                import_gen = import_profile_from_json_stream(db, json_data)
-                try:
-                    while True:
-                        chunk = next(import_gen)
+                json_data = extract_profile_zip(zip_buffer)
+            except ValueError as e:
+                yield f"data: {json.dumps({'error': f'Invalid profile file: {str(e)}', 'done': True})}\n\n"
+                return
+            
+            # Extract preferences from JSON (will be handled by frontend)
+            preferences = json_data.get("preferences", {})
+            
+            # Send message that extraction is complete
+            yield f"data: {json.dumps({'import_phase': 'starting', 'message': 'Starting import...'})}\n\n"
+            await asyncio.sleep(0.01)
+            
+            # Stream import progress - convert sync generator to async
+            import_gen = import_profile_from_json_stream(db, json_data)
+            try:
+                while True:
+                    chunk = next(import_gen)
                         
                         # Check if this is the import_complete message before yielding
                         # Chunk format is: "data: {...}\n\n"
@@ -3667,12 +3681,12 @@ async def import_profile(
                             await asyncio.sleep(0.01)  # 10ms delay for progress updates to ensure they're sent
                         else:
                             await asyncio.sleep(0.001)  # Minimal delay for other messages
-                except StopIteration:
-                    pass  # Generator exhausted
-            except Exception as e:
-                logger.error(f"Error in import stream: {str(e)}", exc_info=True)
-                yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
-                return
+            except StopIteration:
+                pass  # Generator exhausted
+        except Exception as e:
+            logger.error(f"Error in import stream: {str(e)}", exc_info=True)
+            yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
+            return
             
             # If import didn't complete, we can't continue  
             if not import_result:
@@ -3746,6 +3760,11 @@ async def import_profile(
                 
                 # Add background task - it will run after the streaming response completes
                 background_tasks.add_task(process_tracked_lists_background)
+        
+            except Exception as e:
+                logger.error(f"Error in import stream: {str(e)}", exc_info=True)
+                yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
+                return
         
         return StreamingResponse(
             generate_stream(),
