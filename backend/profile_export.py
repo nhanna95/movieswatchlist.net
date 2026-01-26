@@ -328,11 +328,17 @@ def import_profile_from_json_stream(db: Session, json_data: Dict[str, Any]):
     errors = []
     
     logger.info(f"Starting import of {total_movies} movies")
-    # Don't send initial progress message - wait until we actually start processing movies
+    
+    # Send initial progress message to establish connection and prevent timeout
+    import json
+    yield f"data: {json.dumps({'import_phase': 'starting', 'total': total_movies, 'current': 0})}\n\n"
     
     # Flush every 25 movies to prevent memory issues and ensure progress visibility
     # Smaller interval ensures more frequent database flushes and smoother progress
     FLUSH_INTERVAL = 25
+    
+    # Send progress updates every 25 movies to keep connection alive (prevents timeout)
+    PROGRESS_INTERVAL = 25
     
     for idx, movie_data in enumerate(movies_data):
         try:
@@ -399,7 +405,17 @@ def import_profile_from_json_stream(db: Session, json_data: Dict[str, Any]):
                 logger.warning(f"Error flushing database at {idx + 1}: {str(e)}")
                 # Continue anyway - we'll commit at the end
         
-        # Don't send progress updates during movie import - only show progress during TMDB processing
+        # Send periodic progress updates to keep connection alive
+        # This prevents timeouts during large imports (Railway has ~10s timeout)
+        if (idx + 1) % PROGRESS_INTERVAL == 0:
+            progress_data = {
+                "import_phase": "movies",
+                "current": idx + 1,
+                "total": total_movies,
+                "imported": movies_imported,
+                "failed": movies_failed
+            }
+            yield f"data: {json.dumps(progress_data)}\n\n"
     
     # Final flush before commit
     try:

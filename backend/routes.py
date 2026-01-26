@@ -3622,6 +3622,10 @@ async def import_profile(
             import_result = None
             # Access background_tasks from outer scope for tracked lists processing
             
+            # Send initial message immediately to establish connection and prevent timeout
+            yield f"data: {json.dumps({'import_phase': 'initializing', 'message': 'Starting profile import...'})}\n\n"
+            await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
+            
             try:
                 # Stream import progress - convert sync generator to async
                 import_gen = import_profile_from_json_stream(db, json_data)
@@ -3658,11 +3662,11 @@ async def import_profile(
                         
                         # Give the event loop a chance to process and send the chunk immediately
                         # Small delay ensures chunks are sent incrementally rather than batched
-                        # Only delay for progress updates, not for completion messages
-                        if 'import_phase' in chunk:
-                            await asyncio.sleep(0.005)  # 5ms delay for progress updates to prevent batching
+                        # This is critical to prevent Railway timeouts - chunks must be sent frequently
+                        if 'import_phase' in chunk or 'import_complete' in chunk:
+                            await asyncio.sleep(0.01)  # 10ms delay for progress updates to ensure they're sent
                         else:
-                            await asyncio.sleep(0)  # Minimal delay for other messages
+                            await asyncio.sleep(0.001)  # Minimal delay for other messages
                 except StopIteration:
                     pass  # Generator exhausted
             except Exception as e:
