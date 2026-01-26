@@ -44,7 +44,7 @@ export const useMovies = ({
   // Pagination state
   const paginationRef = useRef({
     skip: 0,
-    limit: 50,
+    limit: 200,
     total: 0,
     hasMore: true,
   });

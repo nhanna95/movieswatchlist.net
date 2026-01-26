@@ -2020,7 +2020,7 @@ function App() {
   const [previousFilters, setPreviousFilters] = useState(null); // Store filters before label click
   const [pagination, setPagination] = useState({
     skip: 0,
-    limit: 50,
+    limit: 200,
     total: 0,
     hasMore: true,
   });
@@ -2053,7 +2053,7 @@ function App() {
     async (reset = true) => {
       if (reset) {
         setLoading(true);
-        const initialPagination = { skip: 0, limit: 50, total: 0, hasMore: true };
+        const initialPagination = { skip: 0, limit: 200, total: 0, hasMore: true };
         setPagination(initialPagination);
         paginationRef.current = initialPagination;
       } else {
@@ -3195,7 +3195,7 @@ function App() {
         setSearch('');
         setPagination({
           skip: 0,
-          limit: 50,
+          limit: 200,
           total: 0,
           hasMore: true,
         });

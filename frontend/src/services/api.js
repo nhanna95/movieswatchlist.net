@@ -239,9 +239,10 @@ export const exportProfile = async (includeTmdbData = true, preferences = {}) =>
   const contentDisposition = response.headers['content-disposition'];
   let filename = 'profile-export.zip';
   if (contentDisposition) {
-    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+    // Handle both quoted and unquoted filenames
+    const filenameMatch = contentDisposition.match(/filename="([^"]+)"|filename=([^;\s]+)/);
     if (filenameMatch) {
-      filename = filenameMatch[1];
+      filename = filenameMatch[1] || filenameMatch[2];
     }
   }
 
