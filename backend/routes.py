@@ -3600,52 +3600,53 @@ async def import_profile(
     Returns:
         StreamingResponse with progress updates
     """
-    # Validate file type first (quick check before streaming)
-    if not file.filename or not file.filename.endswith('.zip'):
-        raise HTTPException(status_code=400, detail="File must be a ZIP file")
-    
-    # Stream the import process with progress updates
-    async def generate_stream():
-        import_result = None
+    try:
+        # Validate file type first (quick check before streaming)
+        if not file.filename or not file.filename.endswith('.zip'):
+            raise HTTPException(status_code=400, detail="File must be a ZIP file")
         
-        # Send initial message IMMEDIATELY to establish connection and prevent timeout
-        # This must be sent before any file processing to keep Railway connection alive
-        yield f"data: {json.dumps({'import_phase': 'receiving', 'message': 'Receiving profile file...'})}\n\n"
-        await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
-        
-        try:
-            # Read uploaded file - read in one go (FastAPI handles streaming)
-            # Send keep-alive message before reading
-            yield f"data: {json.dumps({'import_phase': 'reading', 'message': 'Reading profile file...'})}\n\n"
-            await asyncio.sleep(0.01)
+        # Stream the import process with progress updates
+        async def generate_stream():
+            import_result = None
             
-            # Read entire file (FastAPI may have already buffered it)
-            file_contents = await file.read()
-            zip_buffer = BytesIO(file_contents)
+            # Send initial message IMMEDIATELY to establish connection and prevent timeout
+            # This must be sent before any file processing to keep Railway connection alive
+            yield f"data: {json.dumps({'import_phase': 'receiving', 'message': 'Receiving profile file...'})}\n\n"
+            await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
             
-            # Send message that file is received
-            yield f"data: {json.dumps({'import_phase': 'extracting', 'message': 'Extracting profile data...'})}\n\n"
-            await asyncio.sleep(0.01)
-            
-            # Extract and validate ZIP
             try:
-                json_data = extract_profile_zip(zip_buffer)
-            except ValueError as e:
-                yield f"data: {json.dumps({'error': f'Invalid profile file: {str(e)}', 'done': True})}\n\n"
-                return
-            
-            # Extract preferences from JSON (will be handled by frontend)
-            preferences = json_data.get("preferences", {})
-            
-            # Send message that extraction is complete
-            yield f"data: {json.dumps({'import_phase': 'starting', 'message': 'Starting import...'})}\n\n"
-            await asyncio.sleep(0.01)
-            
-            # Stream import progress - convert sync generator to async
-            import_gen = import_profile_from_json_stream(db, json_data)
-            try:
-                while True:
-                    chunk = next(import_gen)
+                # Read uploaded file - read in one go (FastAPI handles streaming)
+                # Send keep-alive message before reading
+                yield f"data: {json.dumps({'import_phase': 'reading', 'message': 'Reading profile file...'})}\n\n"
+                await asyncio.sleep(0.01)
+                
+                # Read entire file (FastAPI may have already buffered it)
+                file_contents = await file.read()
+                zip_buffer = BytesIO(file_contents)
+                
+                # Send message that file is received
+                yield f"data: {json.dumps({'import_phase': 'extracting', 'message': 'Extracting profile data...'})}\n\n"
+                await asyncio.sleep(0.01)
+                
+                # Extract and validate ZIP
+                try:
+                    json_data = extract_profile_zip(zip_buffer)
+                except ValueError as e:
+                    yield f"data: {json.dumps({'error': f'Invalid profile file: {str(e)}', 'done': True})}\n\n"
+                    return
+                
+                # Extract preferences from JSON (will be handled by frontend)
+                preferences = json_data.get("preferences", {})
+                
+                # Send message that extraction is complete
+                yield f"data: {json.dumps({'import_phase': 'starting', 'message': 'Starting import...'})}\n\n"
+                await asyncio.sleep(0.01)
+                
+                # Stream import progress - convert sync generator to async
+                import_gen = import_profile_from_json_stream(db, json_data)
+                try:
+                    while True:
+                        chunk = next(import_gen)
                         
                         # Check if this is the import_complete message before yielding
                         # Chunk format is: "data: {...}\n\n"
@@ -3681,86 +3682,82 @@ async def import_profile(
                             await asyncio.sleep(0.01)  # 10ms delay for progress updates to ensure they're sent
                         else:
                             await asyncio.sleep(0.001)  # Minimal delay for other messages
-            except StopIteration:
-                pass  # Generator exhausted
-        except Exception as e:
-            logger.error(f"Error in import stream: {str(e)}", exc_info=True)
-            yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
-            return
-            
-            # If import didn't complete, we can't continue  
-            if not import_result:
-                logger.error("Import did not complete successfully")
-                return
-            
-            # Check if any movies need reprocessing (missing TMDB data or other fields)
-            # This includes movies with minimal data from export (only title, year, letterboxd_uri, tmdb_id, is_favorite)
-            # We need to check for movies that are missing any of: director, country, runtime, genres, or tmdb_data
-            # Query all movies and filter in Python to handle JSON fields properly
-            all_imported_movies = db.query(Movie).all()
-            movies_needing_tmdb = []
-            for movie in all_imported_movies:
-                # Check if movie is missing any required fields
-                needs_processing = (
-                    movie.tmdb_data is None or 
-                    movie.tmdb_data == {} or
-                    movie.director is None or
-                    movie.country is None or
-                    movie.runtime is None or
-                    movie.genres is None or
-                    (isinstance(movie.genres, list) and len(movie.genres) == 0)
-                )
-                if needs_processing:
-                    movies_needing_tmdb.append(movie)
-            
-            # If movies need reprocessing, stream the TMDB processing
-            if len(movies_needing_tmdb) > 0 and tmdb_client and import_result["movies_imported"] > 0:
-                logger.info(f"Fetching TMDB data for {len(movies_needing_tmdb)} imported movies")
+                except StopIteration:
+                    pass  # Generator exhausted
                 
-                # Send a message indicating TMDB processing is starting
-                yield f"data: {json.dumps({'tmdb_processing_starting': True, 'total_movies': len(movies_needing_tmdb)})}\n\n"
-                await asyncio.sleep(0.001)
+                # If import didn't complete, we can't continue  
+                if not import_result:
+                    logger.error("Import did not complete successfully")
+                    return
+                    
+                # Check if any movies need reprocessing (missing TMDB data or other fields)
+                # This includes movies with minimal data from export (only title, year, letterboxd_uri, tmdb_id, is_favorite)
+                # We need to check for movies that are missing any of: director, country, runtime, genres, or tmdb_data
+                # Query all movies and filter in Python to handle JSON fields properly
+                all_imported_movies = db.query(Movie).all()
+                movies_needing_tmdb = []
+                for movie in all_imported_movies:
+                    # Check if movie is missing any required fields
+                    needs_processing = (
+                        movie.tmdb_data is None or 
+                        movie.tmdb_data == {} or
+                        movie.director is None or
+                        movie.country is None or
+                        movie.runtime is None or
+                        movie.genres is None or
+                        (isinstance(movie.genres, list) and len(movie.genres) == 0)
+                    )
+                    if needs_processing:
+                        movies_needing_tmdb.append(movie)
                 
-                # Stream TMDB processing
-                for chunk in process_tmdb_data_stream(db, movies_needing_tmdb):
-                    yield chunk
+                # If movies need reprocessing, stream the TMDB processing
+                if len(movies_needing_tmdb) > 0 and tmdb_client and import_result["movies_imported"] > 0:
+                    logger.info(f"Fetching TMDB data for {len(movies_needing_tmdb)} imported movies")
+                    
+                    # Send a message indicating TMDB processing is starting
+                    yield f"data: {json.dumps({'tmdb_processing_starting': True, 'total_movies': len(movies_needing_tmdb)})}\n\n"
                     await asyncio.sleep(0.001)
-            else:
-                # No TMDB processing needed - send completion immediately
-                # Tracked lists will be processed in the background after completion message is sent
-                yield f"data: {json.dumps({'current': import_result['movies_imported'], 'total': import_result['movies_imported'], 'processed': 0, 'failed': 0, 'tmdb_data_fetched': 0, 'done': True})}\n\n"
-                
-                # Schedule tracked lists processing to run in background after response is sent
-                def process_tracked_lists_background():
-                    """Background task to process tracked lists after import completes."""
-                    try:
-                        tracked_lists_dir = PROJECT_ROOT / "tracked-lists"
-                        if tracked_lists_dir.exists():
-                            logger.info("Processing tracked lists after import (background task)...")
-                            tracked_lists_results = {}
-                            # Create a new database session for background processing
-                            from database import get_db
-                            background_db = next(get_db())
-                            try:
-                                # Iterate over generator to get final results
-                                for update in process_all_tracked_lists(background_db, tracked_lists_dir):
-                                    if update.get('type') == 'complete':
-                                        tracked_lists_results = update.get('results', {})
-                                if tracked_lists_results:
-                                    for list_name, result in tracked_lists_results.items():
-                                        logger.info(f"{list_name}: {result.get('matched', 0)}/{result.get('total', 0)} matched")
-                                logger.info("Tracked lists processing completed")
-                            finally:
-                                background_db.close()
-                        else:
-                            logger.warning(f"Tracked lists directory not found: {tracked_lists_dir}")
-                    except Exception as e:
-                        logger.warning(f"Error processing tracked lists after import: {str(e)} - continuing anyway")
-                        # Don't fail the entire import if tracked lists processing fails
-                
-                # Add background task - it will run after the streaming response completes
-                background_tasks.add_task(process_tracked_lists_background)
-        
+                    
+                    # Stream TMDB processing
+                    for chunk in process_tmdb_data_stream(db, movies_needing_tmdb):
+                        yield chunk
+                        await asyncio.sleep(0.001)
+                else:
+                    # No TMDB processing needed - send completion immediately
+                    # Tracked lists will be processed in the background after completion message is sent
+                    yield f"data: {json.dumps({'current': import_result['movies_imported'], 'total': import_result['movies_imported'], 'processed': 0, 'failed': 0, 'tmdb_data_fetched': 0, 'done': True})}\n\n"
+                    
+                    # Schedule tracked lists processing to run in background after response is sent
+                    def process_tracked_lists_background():
+                        """Background task to process tracked lists after import completes."""
+                        try:
+                            tracked_lists_dir = PROJECT_ROOT / "tracked-lists"
+                            if tracked_lists_dir.exists():
+                                logger.info("Processing tracked lists after import (background task)...")
+                                tracked_lists_results = {}
+                                # Create a new database session for background processing
+                                from database import get_db
+                                background_db = next(get_db())
+                                try:
+                                    # Iterate over generator to get final results
+                                    for update in process_all_tracked_lists(background_db, tracked_lists_dir):
+                                        if update.get('type') == 'complete':
+                                            tracked_lists_results = update.get('results', {})
+                                    if tracked_lists_results:
+                                        for list_name, result in tracked_lists_results.items():
+                                            logger.info(f"{list_name}: {result.get('matched', 0)}/{result.get('total', 0)} matched")
+                                    logger.info("Tracked lists processing completed")
+                                finally:
+                                    background_db.close()
+                            else:
+                                logger.warning(f"Tracked lists directory not found: {tracked_lists_dir}")
+                        except Exception as e:
+                            logger.warning(f"Error processing tracked lists after import: {str(e)} - continuing anyway")
+                            # Don't fail the entire import if tracked lists processing fails
+                    
+                    # Add background task - it will run after the streaming response completes
+                    background_tasks.add_task(process_tracked_lists_background)
+            
             except Exception as e:
                 logger.error(f"Error in import stream: {str(e)}", exc_info=True)
                 yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
