@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case, not_
 from typing import Optional, Dict, List, Union, Any
-from database import get_db, get_tracked_list_names, filename_to_column_name
+from database import get_db, get_tracked_list_names, filename_to_column_name, is_postgresql
 from models import Movie, FavoriteDirector, SeenCountry
 from csv_parser import parse_watchlist_csv
 from list_processor import process_all_tracked_lists, check_movie_in_tracked_lists, load_tracked_lists
@@ -31,6 +31,45 @@ router = APIRouter()
 # Get the path to watchlist.csv (located in the project root, one level up from backend)
 PROJECT_ROOT = get_project_root()
 CSV_FILE_PATH = PROJECT_ROOT / "watchlist.csv"
+
+# Helper function for database-agnostic JSON extraction
+def json_extract_path(column, json_path: str):
+    """
+    Extract value from JSON column using database-appropriate method.
+    json_path: JSON path like '$.release_date' or '$.production_companies[0].name'
+    """
+    if is_postgresql:
+        # PostgreSQL: Convert JSON path to PostgreSQL operators
+        # $.release_date -> ->'release_date'->>'release_date'
+        # $.production_companies[0].name -> ->'production_companies'->0->>'name'
+        path_parts = json_path.replace('$.', '').split('.')
+        if '[' in path_parts[-1]:
+            # Handle array access like [0]
+            last_part = path_parts[-1]
+            field_name = last_part.split('[')[0]
+            array_index = last_part.split('[')[1].split(']')[0]
+            path_parts[-1] = field_name
+            # Build PostgreSQL path: ->'field'->array_index->>'name'
+            expr = column
+            for part in path_parts[:-1]:
+                expr = expr[part]
+            expr = expr[path_parts[-1]][int(array_index)]['name']
+            return expr.astext if hasattr(expr, 'astext') else expr
+        else:
+            # Simple field access: ->>'field'
+            expr = column
+            for part in path_parts:
+                if '[' in part:
+                    # Handle array in middle of path
+                    field_name = part.split('[')[0]
+                    array_index = part.split('[')[1].split(']')[0]
+                    expr = expr[field_name][int(array_index)]
+                else:
+                    expr = expr[part]
+            return expr.astext if hasattr(expr, 'astext') else expr
+    else:
+        # SQLite: Use json_extract
+        return func.json_extract(column, json_path)
 
 def check_movie_availability(
     movie_tmdb_data: Union[dict, str, None],
@@ -1345,8 +1384,13 @@ def get_movies(
             return Movie.title
         elif field == "year":
             # Sort by release_date from tmdb_data (more precise than year), fallback to year if release_date is missing
-            release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
-            year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
+            if is_postgresql:
+                # PostgreSQL: Use ->> operator for JSON field access (returns text)
+                release_date_expr = text("movies.tmdb_data->>'release_date'")
+                year_fallback = func.to_char(Movie.year, 'FM9999') + '-01-01'
+            else:
+                release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
+                year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
             return func.coalesce(release_date_expr, year_fallback)
         elif field == "runtime":
             return Movie.runtime
@@ -1359,21 +1403,33 @@ def get_movies(
         elif field == "production_company":
             # Extract first production company from tmdb_data JSON array
             # Note: This is only used for non-first sorts. First sort uses expansion logic.
-            # SQLite json_extract syntax: $.production_companies[0].name
-            first_company = func.json_extract(Movie.tmdb_data, '$.production_companies[0].name')
+            if is_postgresql:
+                # PostgreSQL: ->'production_companies'->0->>'name'
+                first_company = text("movies.tmdb_data->'production_companies'->0->>'name'")
+            else:
+                first_company = func.json_extract(Movie.tmdb_data, '$.production_companies[0].name')
             return func.coalesce(first_company, '')
         elif field == "genres":
             # Sort genres by first genre alphabetically
             # Extract first genre from JSON array and convert to string for sorting
-            first_genre = func.json_extract(Movie.genres, '$[0]')
+            if is_postgresql:
+                # PostgreSQL: ->0->>'' for array access
+                first_genre = text("movies.genres->0")
+            else:
+                first_genre = func.json_extract(Movie.genres, '$[0]')
             return func.coalesce(first_genre, '')
         elif field == "in_collection":
             # Boolean: check if belongs_to_collection exists in tmdb_data
             # Returns 1 if collection exists, 0/null if not
-            return case(
-                (func.json_extract(Movie.tmdb_data, '$.belongs_to_collection').isnot(None), 1),
-                else_=0
-            )
+            if is_postgresql:
+                # PostgreSQL: Use -> operator to check if key exists
+                return text("CASE WHEN movies.tmdb_data->'belongs_to_collection' IS NOT NULL THEN 1 ELSE 0 END")
+            else:
+                collection_expr = func.json_extract(Movie.tmdb_data, '$.belongs_to_collection')
+                return case(
+                    (collection_expr.isnot(None), 1),
+                    else_=0
+                )
         elif field == "is_favorite":
             return Movie.is_favorite
         elif field == "date_added":
@@ -1385,8 +1441,12 @@ def get_movies(
             return text(f"movies.{field}")
         else:
             # Default: sort by release_date (fallback to year)
-            release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
-            year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
+            if is_postgresql:
+                release_date_expr = text("movies.tmdb_data->>'release_date'")
+                year_fallback = func.to_char(Movie.year, 'FM9999') + '-01-01'
+            else:
+                release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
+                year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
             return func.coalesce(release_date_expr, year_fallback)
     
     # Parse sorts to determine if we need expansion (genres or production_company)
