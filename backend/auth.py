@@ -11,6 +11,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import hashlib
+import base64
 
 from config import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS
 from database import get_db
@@ -20,10 +22,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Password hashing context
-# Use bcrypt_sha256 as primary to handle passwords longer than 72 bytes
-# It hashes with SHA256 first, then applies bcrypt
-# Also support plain bcrypt for backward compatibility with existing users
-pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
+# Use plain bcrypt for backward compatibility
+# We manually pre-hash long passwords with SHA256 before bcrypt
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -60,14 +61,58 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+def _pre_hash_password(password: str) -> bytes:
+    """
+    Pre-hash password with SHA256 to handle passwords longer than 72 bytes.
+    Returns base64-encoded SHA256 hash (always 44 bytes, safe for bcrypt).
+    """
+    # Hash with SHA256 and encode to base64
+    sha256_hash = hashlib.sha256(password.encode('utf-8')).digest()
+    return base64.b64encode(sha256_hash)
+
+
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt."""
-    return pwd_context.hash(password)
+    """
+    Hash a password using bcrypt.
+    For passwords longer than 72 bytes, pre-hash with SHA256 first.
+    """
+    # Check if password is longer than 72 bytes
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        # Pre-hash with SHA256 to ensure it's always <= 72 bytes
+        pre_hashed = _pre_hash_password(password)
+        # Use a special prefix to identify pre-hashed passwords
+        # Format: $2b$12$<bcrypt_hash_of_prehashed_password>
+        return pwd_context.hash(pre_hashed.decode('utf-8'))
+    else:
+        # Use plain bcrypt for short passwords (backward compatibility)
+        return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """
+    Verify a password against a hash.
+    Handles both plain bcrypt hashes and pre-hashed (SHA256) bcrypt hashes.
+    """
+    password_bytes = plain_password.encode('utf-8')
+    
+    # If password is longer than 72 bytes, always pre-hash it before verification
+    if len(password_bytes) > 72:
+        pre_hashed = _pre_hash_password(plain_password)
+        return pwd_context.verify(pre_hashed.decode('utf-8'), hashed_password)
+    else:
+        # For passwords <= 72 bytes, try plain password first (for backward compatibility)
+        try:
+            if pwd_context.verify(plain_password, hashed_password):
+                return True
+        except (ValueError, Exception):
+            # If verification fails or raises an error, try pre-hashed version
+            # (handles edge cases where hash might have been created differently)
+            pass
+        
+        # Try pre-hashed version as fallback
+        pre_hashed = _pre_hash_password(plain_password)
+        return pwd_context.verify(pre_hashed.decode('utf-8'), hashed_password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
