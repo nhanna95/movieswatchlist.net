@@ -24,8 +24,6 @@ const KeyboardShortcutsHelp = ({ onClose }) => {
     { key: 'F', description: 'Toggle favorite on selected movie' },
     { key: '?', description: 'Show keyboard shortcuts help' },
     { key: '↑ ↓', description: 'Navigate between movies' },
-    { key: 'Ctrl/Cmd + F', description: 'Open filter panel' },
-    { key: 'Ctrl/Cmd + S', description: 'Save current filter preset' },
   ];
 
   return (

@@ -53,6 +53,7 @@ const FilterBar = ({
   });
   const sortButtonRef = useRef(null);
   const filterMenuButtonRef = useRef(null);
+  const filterMenuDropdownRef = useRef(null);
   const columnsButtonRef = useRef(null);
   const presetsButtonRef = useRef(null);
   const filterTagRefs = useRef({});
@@ -188,8 +189,12 @@ const FilterBar = ({
       if (sortButtonRef.current && !sortButtonRef.current.contains(event.target)) {
         setSortDropdownOpen(false);
       }
-      if (filterMenuButtonRef.current && !filterMenuButtonRef.current.contains(event.target)) {
-        setFilterMenuOpen(false);
+      if (filterMenuOpen) {
+        const clickedInsideButton = filterMenuButtonRef.current?.contains(event.target);
+        const clickedInsideDropdown = filterMenuDropdownRef.current?.contains(event.target);
+        if (!clickedInsideButton && !clickedInsideDropdown) {
+          setFilterMenuOpen(false);
+        }
       }
       if (columnsButtonRef.current && !columnsButtonRef.current.contains(event.target)) {
         if (onColumnCustomizerOpen && columnCustomizerOpen) {
@@ -677,7 +682,10 @@ const FilterBar = ({
             + Filter
           </button>
           {filterMenuOpen && (
-            <div className={`filter-bar-dropdown-container ${filterMenuAlignRight ? 'align-right' : ''}`}>
+            <div
+              ref={filterMenuDropdownRef}
+              className={`filter-bar-dropdown-container ${filterMenuAlignRight ? 'align-right' : ''}`}
+            >
               <FilterMenu
                 availableFilters={Object.values(filterTypes).filter(
                   (ft) =>

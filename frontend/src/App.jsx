@@ -1532,7 +1532,6 @@ function App() {
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [helpModalOpen, setHelpModalOpen] = useState(false);
-  const [triggerOpenFilterMenu, setTriggerOpenFilterMenu] = useState(0);
   const [addMovieModalOpen, setAddMovieModalOpen] = useState(false);
   const [addMovieModalInitialData, setAddMovieModalInitialData] = useState(null);
   const [preferredServices, setPreferredServices] = useState(() => {
@@ -2594,24 +2593,6 @@ function App() {
           break;
       }
 
-      // Handle Ctrl/Cmd combinations
-      if (event.ctrlKey || event.metaKey) {
-        switch (event.key.toLowerCase()) {
-          case 'f':
-            event.preventDefault();
-            // Open filter panel
-            setTriggerOpenFilterMenu((prev) => prev + 1);
-            break;
-          case 's':
-            event.preventDefault();
-            // Save filter preset - will be implemented with filter presets feature
-            // For now, just prevent default browser save
-            break;
-          default:
-            // No action for other Ctrl/Cmd combinations
-            break;
-        }
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -4148,7 +4129,6 @@ function App() {
             onSavePreviousFilters={(filters) => setPreviousFilters(filters)}
             showConfirm={showConfirm}
             filteredCount={pagination.total}
-            triggerOpenFilterMenu={triggerOpenFilterMenu}
           />
 
           <MovieList
