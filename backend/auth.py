@@ -20,7 +20,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use bcrypt_sha256 as primary to handle passwords longer than 72 bytes
+# It hashes with SHA256 first, then applies bcrypt
+# Also support plain bcrypt for backward compatibility with existing users
+pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
