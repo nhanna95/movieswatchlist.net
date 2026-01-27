@@ -29,6 +29,7 @@ import {
   processCSVWithSelections,
   getFavoriteDirectors,
 } from './services/api';
+import { getToken } from './services/auth';
 import { filterTypes } from './components/filterTypes';
 import { formatRuntime } from './utils';
 import { detectCountry, setStoredCountry, getStoredCountry } from './utils/countryDetection';
@@ -2941,11 +2942,15 @@ function App() {
 
     try {
       let response;
+      const token = getToken();
       try {
         response = await fetch(`${API_BASE_URL}/api/import-profile`, {
           method: 'POST',
           body: formData,
-          credentials: 'include', // Important for sending cookies/auth with cross-origin requests
+          credentials: 'include',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           // Don't set Content-Type - browser will set it with boundary automatically
         });
       } catch (fetchError) {
