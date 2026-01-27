@@ -6,7 +6,7 @@ from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case
 from typing import Optional, Dict, List, Union, Any
 from database import (
     get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
-    get_user_db_session, UserScopedSession, get_user_schema_name
+    get_user_db_session, get_user_db_context, UserScopedSession, get_user_schema_name, migrate_user_schema
 )
 from models import Movie, FavoriteDirector, SeenCountry, User
 from csv_parser import parse_watchlist_csv
@@ -3518,9 +3518,13 @@ def process_tracked_lists(db = Depends(get_user_db)):
     Process all CSV files in the tracked-lists directory and update movie list memberships.
     """
     try:
+        # Ensure user schema has all tracked list columns before processing
+        if hasattr(db, 'schema_name'):
+            migrate_user_schema(db.schema_name)
+
         project_root = get_project_root()
         tracked_lists_dir = project_root / "tracked-lists"
-        
+
         # Iterate over generator to get final results
         results = {}
         for update in process_all_tracked_lists(db, tracked_lists_dir):
@@ -3873,30 +3877,30 @@ async def import_profile(
                     # Tracked lists will be processed in the background after completion message is sent
                     yield f"data: {json.dumps({'current': import_result['movies_imported'], 'total': import_result['movies_imported'], 'processed': 0, 'failed': 0, 'tmdb_data_fetched': 0, 'done': True})}\n\n"
                     
-                    # Schedule tracked lists processing to run in background after response is sent
+                    # Schedule tracked lists processing to run in background after response is sent.
+                    # Use user-scoped session so we update the current user's movies, not the default schema.
+                    user_id_val = getattr(db, 'user_id', None)
+                    schema_name_val = getattr(db, 'schema_name', None)
                     def process_tracked_lists_background():
                         """Background task to process tracked lists after import completes."""
                         try:
                             tracked_lists_dir = PROJECT_ROOT / "tracked-lists"
-                            if tracked_lists_dir.exists():
+                            if tracked_lists_dir.exists() and user_id_val is not None and schema_name_val:
                                 logger.info("Processing tracked lists after import (background task)...")
-                                tracked_lists_results = {}
-                                # Create a new database session for background processing
-                                from database import get_db
-                                background_db = next(get_db())
-                                try:
-                                    # Iterate over generator to get final results
-                                    for update in process_all_tracked_lists(background_db, tracked_lists_dir):
+                                migrate_user_schema(schema_name_val)
+                                with get_user_db_context(user_id_val, schema_name_val) as user_db:
+                                    tracked_lists_results = {}
+                                    for update in process_all_tracked_lists(user_db, tracked_lists_dir):
                                         if update.get('type') == 'complete':
                                             tracked_lists_results = update.get('results', {})
                                     if tracked_lists_results:
                                         for list_name, result in tracked_lists_results.items():
                                             logger.info(f"{list_name}: {result.get('matched', 0)}/{result.get('total', 0)} matched")
                                     logger.info("Tracked lists processing completed")
-                                finally:
-                                    background_db.close()
-                            else:
+                            elif not tracked_lists_dir.exists():
                                 logger.warning(f"Tracked lists directory not found: {tracked_lists_dir}")
+                            else:
+                                logger.warning("Skipping tracked lists background task: no user schema info")
                         except Exception as e:
                             logger.warning(f"Error processing tracked lists after import: {str(e)} - continuing anyway")
                             # Don't fail the entire import if tracked lists processing fails

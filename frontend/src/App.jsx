@@ -22,6 +22,7 @@ import {
   getCollectionMovies,
   getSimilarMovies,
   clearCache,
+  processTrackedLists,
   setMovieFavorite,
   exportProfile,
   exportMovies,
@@ -652,6 +653,7 @@ const ImportExportModal = ({
   onClose,
   onUploadSuccess,
   onClearCache,
+  onProcessTrackedLists,
   onExportProfile,
   onImportProfile,
   filters,
@@ -1488,6 +1490,17 @@ const ImportExportModal = ({
             </div>
           </div>
 
+          {onProcessTrackedLists && (
+            <div className="cache-control" style={{ marginTop: '2rem' }}>
+              <h2>Tracked Lists</h2>
+              <p className="cache-description">
+                Re-apply tracked lists (e.g. IMDb Top 250, Letterboxd Top 250) to match your movies. Run this after adding or importing movies.
+              </p>
+              <button onClick={onProcessTrackedLists} className="clear-cache-button" type="button">
+                Refresh Tracked Lists
+              </button>
+            </div>
+          )}
           <div className="cache-control" style={{ marginTop: '2rem' }}>
             <h2>Reset Database</h2>
             <p className="cache-description">
@@ -3282,6 +3295,26 @@ function App() {
     }
   };
 
+  const handleProcessTrackedLists = async () => {
+    try {
+      const data = await processTrackedLists();
+      loadMovies(true);
+      const msg =
+        data?.results && Object.keys(data.results).length
+          ? Object.entries(data.results)
+              .map(([name, r]) => `${name}: ${r.matched ?? 0}/${r.total ?? 0} matched`)
+              .join('; ')
+          : 'Tracked lists refreshed.';
+      addToast(msg, 'success');
+    } catch (error) {
+      console.error('Error refreshing tracked lists:', error);
+      addToast(
+        'Error refreshing tracked lists: ' + (error.response?.data?.detail || error.message),
+        'error'
+      );
+    }
+  };
+
   const handleCloseModal = () => {
     setSelectedMovie(null);
     setPreviousMovie(null);
@@ -3942,6 +3975,7 @@ function App() {
           onClose={() => setImportExportModalOpen(false)}
           onUploadSuccess={handleUploadSuccess}
           onClearCache={handleClearCache}
+          onProcessTrackedLists={handleProcessTrackedLists}
           onExportProfile={handleExportProfile}
           onImportProfile={(file, callbacks) =>
             handleImportProfile(file, callbacks, loadMovies, loadStats)

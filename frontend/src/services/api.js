@@ -251,6 +251,12 @@ export const clearCache = async () => {
   return response.data;
 };
 
+/** Process tracked lists (CSV files in tracked-lists/) and update movie list memberships. */
+export const processTrackedLists = async () => {
+  const response = await api.post('/api/movies/process-tracked-lists');
+  return response.data;
+};
+
 export const exportProfile = async (includeTmdbData = true, preferences = {}) => {
   // Export profile downloads a ZIP file, so we need to handle it differently
   const response = await api.post(

@@ -41,13 +41,30 @@ def normalize_title(title: str) -> str:
 
 def match_movie_by_uri(db: Session, letterboxd_uri: str) -> Movie:
     """
-    Match movie by Letterboxd URI.
+    Match movie by Letterboxd URI. Tries exact match first, then normalized comparison
+    so that list URLs (e.g. https://letterboxd.com/film/foo/) match DB values stored
+    as path (film/foo/) or vice versa.
     """
     if not letterboxd_uri:
         return None
     
     movie = db.query(Movie).filter(Movie.letterboxd_uri == letterboxd_uri).first()
-    return movie
+    if movie:
+        return movie
+
+    normalized_input = normalize_uri(letterboxd_uri)
+    if not normalized_input:
+        return None
+    movie = db.query(Movie).filter(Movie.letterboxd_uri == normalized_input).first()
+    if movie:
+        return movie
+
+    # Fallback: find movie whose stored URI normalizes to same value (e.g. list has full URL, DB has path)
+    candidates = db.query(Movie).filter(Movie.letterboxd_uri.isnot(None)).limit(5000).all()
+    for m in candidates:
+        if normalize_uri(m.letterboxd_uri) == normalized_input:
+            return m
+    return None
 
 def match_movie_by_title_year(db: Session, title: str, year: int) -> Movie:
     """
