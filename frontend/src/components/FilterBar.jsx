@@ -50,6 +50,14 @@ const FilterBar = ({
     const saved = localStorage.getItem('filterPresets');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Clear presets when reset database (or filterPresetsCleared) is triggered
+  useEffect(() => {
+    const handler = () => setPresets([]);
+    window.addEventListener('filterPresetsCleared', handler);
+    return () => window.removeEventListener('filterPresetsCleared', handler);
+  }, []);
+
   const sortButtonRef = useRef(null);
   const filterMenuButtonRef = useRef(null);
   const filterMenuDropdownRef = useRef(null);

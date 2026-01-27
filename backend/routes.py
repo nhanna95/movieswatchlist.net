@@ -3795,36 +3795,77 @@ async def import_profile(
                     logger.error("Import did not complete successfully")
                     return
                     
-                # Check if any movies need reprocessing (missing TMDB data or other fields)
-                # This includes movies with minimal data from export (only title, year, letterboxd_uri, tmdb_id, is_favorite)
-                # We need to check for movies that are missing any of: director, country, runtime, genres, or tmdb_data
-                # Query all movies and filter in Python to handle JSON fields properly
-                all_imported_movies = db.query(Movie).all()
-                movies_needing_tmdb = []
-                for movie in all_imported_movies:
-                    # Check if movie is missing any required fields
-                    needs_processing = (
-                        movie.tmdb_data is None or 
-                        movie.tmdb_data == {} or
-                        movie.director is None or
-                        movie.country is None or
-                        movie.runtime is None or
-                        movie.genres is None or
-                        (isinstance(movie.genres, list) and len(movie.genres) == 0)
+                # Post-import: only fetch from TMDB API for movies that truly lack tmdb_data.
+                # Movies that have tmdb_data from the import must not be sent to the API stream,
+                # or we overwrite imported data when the API fails or returns empty.
+                def _has_usable_tmdb_data(m):
+                    td = m.tmdb_data
+                    if td is None:
+                        return False
+                    if isinstance(td, dict):
+                        return bool(td)
+                    if isinstance(td, str):
+                        try:
+                            d = json.loads(td)
+                            return isinstance(d, dict) and bool(d)
+                        except Exception:
+                            return False
+                    return False
+
+                def _needs_denormalized_backfill(m):
+                    if not _has_usable_tmdb_data(m):
+                        return False
+                    return (
+                        m.director is None or m.country is None or m.runtime is None or
+                        m.genres is None or (isinstance(m.genres, list) and len(m.genres) == 0)
                     )
-                    if needs_processing:
-                        movies_needing_tmdb.append(movie)
-                
-                # If movies need reprocessing, stream the TMDB processing
-                if len(movies_needing_tmdb) > 0 and tmdb_client and import_result["movies_imported"] > 0:
-                    logger.info(f"Fetching TMDB data for {len(movies_needing_tmdb)} imported movies")
+
+                all_imported_movies = db.query(Movie).all()
+                movies_needing_api = [m for m in all_imported_movies if not _has_usable_tmdb_data(m)]
+                movies_needing_backfill = [m for m in all_imported_movies if _needs_denormalized_backfill(m)]
+
+                # Backfill director/country/runtime/genres from existing tmdb_data (no API call)
+                if movies_needing_backfill:
+                    logger.info(f"Backfilling denormalized fields from imported TMDB data for {len(movies_needing_backfill)} movies")
+                    for movie in movies_needing_backfill:
+                        try:
+                            td = movie.tmdb_data
+                            if isinstance(td, str):
+                                try:
+                                    td = json.loads(td)
+                                except Exception:
+                                    continue
+                            if not isinstance(td, dict):
+                                continue
+                            enriched = extract_enriched_data_from_tmdb(td)
+                            if enriched.get('director') is not None:
+                                movie.director = enriched['director']
+                            if enriched.get('country') is not None:
+                                movie.country = enriched['country']
+                            if enriched.get('runtime') is not None:
+                                movie.runtime = enriched['runtime']
+                            if enriched.get('genres'):
+                                movie.genres = enriched['genres']
+                            if enriched.get('tmdb_id') is not None:
+                                movie.tmdb_id = enriched['tmdb_id']
+                        except Exception as e:
+                            logger.warning(f"Backfill from tmdb_data failed for {movie.title}: {e}")
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        logger.warning(f"Commit after backfill failed: {e}")
+                        db.rollback()
+
+                # Only fetch from TMDB API for movies that lack tmdb_data
+                if len(movies_needing_api) > 0 and tmdb_client and import_result["movies_imported"] > 0:
+                    logger.info(f"Fetching TMDB data for {len(movies_needing_api)} imported movies (missing tmdb_data)")
                     
                     # Send a message indicating TMDB processing is starting
-                    yield f"data: {json.dumps({'tmdb_processing_starting': True, 'total_movies': len(movies_needing_tmdb)})}\n\n"
+                    yield f"data: {json.dumps({'tmdb_processing_starting': True, 'total_movies': len(movies_needing_api)})}\n\n"
                     await asyncio.sleep(0.001)
                     
-                    # Stream TMDB processing
-                    for chunk in process_tmdb_data_stream(db, movies_needing_tmdb):
+                    # Stream TMDB processing (only for movies that have no tmdb_data)
+                    for chunk in process_tmdb_data_stream(db, movies_needing_api):
                         yield chunk
                         await asyncio.sleep(0.001)
                 else:

@@ -3242,6 +3242,9 @@ function App() {
         localStorage.setItem('currentSearch', '');
         // Clear CSV processing state if it exists
         localStorage.removeItem('csvProcessingState');
+        // Clear filter presets so they don't persist to a new account or after reset
+        localStorage.removeItem('filterPresets');
+        window.dispatchEvent(new CustomEvent('filterPresetsCleared'));
 
         // Reset all state to defaults
         setTheme('dark');
