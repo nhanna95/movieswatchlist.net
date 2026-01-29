@@ -2105,6 +2105,7 @@ function App() {
   const searchRef = useRef(search);
   const isUpdatingFavoriteRef = useRef(false);
   const skipNextSaveRef = useRef(false);
+  const [settingsSaveTrigger, setSettingsSaveTrigger] = useState(0);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -2221,6 +2222,13 @@ function App() {
     };
   }, [user, applyPreferences]);
 
+  // When FilterBar updates presets (save/edit/delete), trigger a save to server
+  useEffect(() => {
+    const handler = () => setSettingsSaveTrigger((prev) => prev + 1);
+    window.addEventListener('filterPresetsChanged', handler);
+    return () => window.removeEventListener('filterPresetsChanged', handler);
+  }, []);
+
   // Persist preferences to server when they change (debounced; skip first run after load from server)
   const SAVE_SETTINGS_DEBOUNCE_MS = 1500;
   useEffect(() => {
@@ -2274,6 +2282,7 @@ function App() {
     searchHistory,
     preferredServices,
     statsSettings,
+    settingsSaveTrigger,
   ]);
 
   const loadMovies = useCallback(

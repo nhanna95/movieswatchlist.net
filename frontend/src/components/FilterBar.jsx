@@ -458,6 +458,7 @@ const FilterBar = ({
 
     setPresets(updatedPresets);
     localStorage.setItem('filterPresets', JSON.stringify(updatedPresets));
+    window.dispatchEvent(new CustomEvent('filterPresetsChanged'));
     setPresetName('');
     setShowSavePresetInput(false);
     setEditingPresetId(null);
@@ -486,6 +487,7 @@ const FilterBar = ({
     const updatedPresets = presets.filter((p) => p.id !== presetId);
     setPresets(updatedPresets);
     localStorage.setItem('filterPresets', JSON.stringify(updatedPresets));
+    window.dispatchEvent(new CustomEvent('filterPresetsChanged'));
   };
 
   const startEditPreset = (preset) => {
