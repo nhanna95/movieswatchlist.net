@@ -147,6 +147,7 @@ async def get_user_settings(current_user: User = Depends(get_current_user)):
     Returns {} if no row or empty data. Returns {} on error (e.g. table not yet created).
     """
     try:
+        migrate_user_schema(current_user.schema_name)
         schema_name = current_user.schema_name
         user_id = current_user.id
         with engine.connect() as conn:
@@ -184,6 +185,7 @@ async def put_user_settings(
     Accepts partial updates; merge with existing server-side blob.
     """
     try:
+        migrate_user_schema(current_user.schema_name)
         schema_name = current_user.schema_name
         user_id = current_user.id
         with engine.connect() as conn:
