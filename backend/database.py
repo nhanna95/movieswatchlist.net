@@ -122,6 +122,15 @@ def create_user_tables_in_schema(schema_name: str):
         '''))
         conn.execute(text(f'CREATE INDEX IF NOT EXISTS idx_{schema_name}_seen_countries_name ON "{schema_name}".seen_countries (country_name)'))
         
+        # User preferences (single row per user, JSON blob)
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS "{schema_name}".user_preferences (
+                id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                data JSONB,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        
         # Add tracked list columns if needed
         tracked_list_columns = get_tracked_list_names()
         for column_name in tracked_list_columns:
@@ -175,6 +184,15 @@ def create_user_tables_sqlite(user_id: int):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 country_name TEXT UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        
+        # User preferences (single row per user, JSON blob)
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS {prefix}user_preferences (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         '''))
         
@@ -271,7 +289,7 @@ def filename_to_column_name(filename):
 
 def migrate_user_schema(schema_name: str):
     """
-    Migrate a user's schema to add new columns if they don't exist.
+    Migrate a user's schema to add new columns and tables if they don't exist.
     """
     with engine.connect() as conn:
         if is_postgresql:
@@ -292,7 +310,44 @@ def migrate_user_schema(schema_name: str):
                         conn.execute(text(f'ALTER TABLE "{schema_name}".movies ADD COLUMN IF NOT EXISTS {column_name} BOOLEAN DEFAULT FALSE'))
                     except Exception as e:
                         logger.debug(f"Column {column_name} may already exist: {e}")
+                # Add user_preferences table if missing (existing users)
+                pref_result = conn.execute(text(f'''
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = :schema_name
+                        AND table_name = 'user_preferences'
+                    )
+                '''), {"schema_name": schema_name})
+                if not pref_result.scalar():
+                    conn.execute(text(f'''
+                        CREATE TABLE "{schema_name}".user_preferences (
+                            id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                            data JSONB,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    '''))
                 conn.commit()
+        else:
+            # SQLite: schema_name is "user_{id}", create user_preferences table if missing
+            try:
+                user_id_str = schema_name.replace("user_", "")
+                user_id = int(user_id_str)
+            except (ValueError, AttributeError):
+                logger.warning(f"Could not parse user_id from schema_name: {schema_name}")
+                return
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            pref_table = f"user_{user_id}_user_preferences"
+            if pref_table not in tables:
+                conn.execute(text(f'''
+                    CREATE TABLE IF NOT EXISTS {pref_table} (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        data TEXT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                '''))
+                conn.commit()
+                logger.info(f"Created {pref_table} for SQLite")
 
 
 def migrate_db():

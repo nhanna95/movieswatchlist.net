@@ -58,6 +58,16 @@ const FilterBar = ({
     return () => window.removeEventListener('filterPresetsCleared', handler);
   }, []);
 
+  // Load presets when user settings are applied from server (e.g. after login)
+  useEffect(() => {
+    const handler = (e) => {
+      const next = e.detail && Array.isArray(e.detail) ? e.detail : [];
+      setPresets(next);
+    };
+    window.addEventListener('filterPresetsLoaded', handler);
+    return () => window.removeEventListener('filterPresetsLoaded', handler);
+  }, []);
+
   const sortButtonRef = useRef(null);
   const filterMenuButtonRef = useRef(null);
   const filterMenuDropdownRef = useRef(null);

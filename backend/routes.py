@@ -6,7 +6,8 @@ from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case
 from typing import Optional, Dict, List, Union, Any
 from database import (
     get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
-    get_user_db_session, get_user_db_context, UserScopedSession, get_user_schema_name, migrate_user_schema
+    get_user_db_session, get_user_db_context, UserScopedSession, get_user_schema_name, migrate_user_schema,
+    engine
 )
 from models import Movie, FavoriteDirector, SeenCountry, User
 from csv_parser import parse_watchlist_csv
@@ -133,6 +134,104 @@ def get_user_db(current_user: User = Depends(get_current_user)):
             next(session_gen)
         except StopIteration:
             pass
+
+
+# ==========================================
+# User Settings (preferences) API
+# ==========================================
+
+@router.get("/api/user/settings")
+async def get_user_settings(current_user: User = Depends(get_current_user)):
+    """
+    Get the current user's preferences/settings (JSON blob).
+    Returns {} if no row or empty data.
+    """
+    schema_name = current_user.schema_name
+    user_id = current_user.id
+    with engine.connect() as conn:
+        if is_postgresql:
+            result = conn.execute(
+                text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+            )
+        else:
+            result = conn.execute(
+                text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+            )
+        row = result.fetchone()
+        conn.commit()
+    if not row or row[0] is None:
+        return {}
+    data = row[0]
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return {}
+    return data if isinstance(data, dict) else {}
+
+
+@router.put("/api/user/settings")
+async def put_user_settings(
+    body: Dict[str, Any],
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upsert the current user's preferences/settings (JSON blob).
+    Accepts partial updates; merge with existing server-side blob.
+    """
+    schema_name = current_user.schema_name
+    user_id = current_user.id
+    with engine.connect() as conn:
+        if is_postgresql:
+            # Read existing
+            result = conn.execute(
+                text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+            )
+            row = result.fetchone()
+            existing = row[0] if row and row[0] else None
+            if isinstance(existing, str):
+                try:
+                    existing = json.loads(existing)
+                except json.JSONDecodeError:
+                    existing = {}
+            elif not isinstance(existing, dict):
+                existing = {}
+            merged = {**existing, **body}
+            json_str = json.dumps(merged)
+            conn.execute(
+                text('''
+                    INSERT INTO "{}".user_preferences (id, data, updated_at)
+                    VALUES (1, CAST(:data AS jsonb), CURRENT_TIMESTAMP)
+                    ON CONFLICT (id) DO UPDATE SET data = CAST(:data AS jsonb), updated_at = CURRENT_TIMESTAMP
+                ''').format(schema_name),
+                {"data": json_str}
+            )
+        else:
+            result = conn.execute(
+                text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+            )
+            row = result.fetchone()
+            existing = row[0] if row and row[0] else None
+            if isinstance(existing, str):
+                try:
+                    existing = json.loads(existing)
+                except json.JSONDecodeError:
+                    existing = {}
+            elif not isinstance(existing, dict):
+                existing = {}
+            merged = {**existing, **body}
+            json_str = json.dumps(merged)
+            conn.execute(
+                text(f'''
+                    INSERT INTO user_{user_id}_user_preferences (id, data, updated_at)
+                    VALUES (1, :data, CURRENT_TIMESTAMP)
+                    ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
+                '''),
+                {"data": json_str}
+            )
+        conn.commit()
+    return {"ok": True}
+
 
 # Get the path to watchlist.csv (located in the project root, one level up from backend)
 PROJECT_ROOT = get_project_root()

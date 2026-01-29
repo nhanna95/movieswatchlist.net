@@ -8,6 +8,7 @@ import {
   verifyToken,
   fetchCurrentUser,
 } from '../services/auth';
+import { clearAllUserData } from '../constants/userStorageKeys';
 
 // Create Auth Context
 const AuthContext = createContext(null);
@@ -109,11 +110,7 @@ export const AuthProvider = ({ children }) => {
       await authLogout();
       setUser(null);
       setError(null);
-      // Clear per-user UI data so the next account doesn't see the previous account's data
-      try {
-        localStorage.removeItem('filterPresets');
-        window.dispatchEvent(new CustomEvent('filterPresetsCleared'));
-      } catch (_) {}
+      clearAllUserData();
     } catch (err) {
       console.error('Logout error:', err);
     } finally {

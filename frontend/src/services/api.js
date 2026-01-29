@@ -92,6 +92,16 @@ export const getStats = async () => {
   return response.data;
 };
 
+export const getSettings = async () => {
+  const response = await api.get('/api/user/settings');
+  return response.data;
+};
+
+export const saveSettings = async (body) => {
+  const response = await api.put('/api/user/settings', body);
+  return response.data;
+};
+
 export const getDirectors = async () => {
   const response = await api.get('/api/movies/directors');
   return response.data;

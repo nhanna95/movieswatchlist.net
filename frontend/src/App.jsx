@@ -29,6 +29,8 @@ import {
   deleteMovie,
   processCSVWithSelections,
   getFavoriteDirectors,
+  getSettings,
+  saveSettings,
 } from './services/api';
 import { getToken } from './services/auth';
 import { filterTypes } from './components/filterTypes';
@@ -1517,6 +1519,8 @@ const ImportExportModal = ({
 };
 
 function App() {
+  const { user } = useAuth();
+
   // Get system theme preference
   const getSystemTheme = useCallback(() => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -2100,6 +2104,7 @@ function App() {
   const filtersRef = useRef(filters);
   const searchRef = useRef(search);
   const isUpdatingFavoriteRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -2117,6 +2122,159 @@ function App() {
   useEffect(() => {
     searchRef.current = search;
   }, [search]);
+
+  // Apply preferences from server or import to state and localStorage (shared with import flow)
+  const applyPreferences = useCallback(
+    (prefs) => {
+      if (!prefs || typeof prefs !== 'object') return;
+      if (prefs.theme) {
+        localStorage.setItem('theme', prefs.theme);
+        setTheme(prefs.theme);
+      }
+      if (prefs.viewMode) {
+        localStorage.setItem('viewMode', prefs.viewMode);
+        setViewMode(prefs.viewMode);
+      }
+      if (prefs.streaming_country_code) {
+        setStoredCountry(prefs.streaming_country_code);
+        setCountryCode(prefs.streaming_country_code);
+      }
+      if (prefs.preferred_streaming_services != null) {
+        const arr = Array.isArray(prefs.preferred_streaming_services)
+          ? prefs.preferred_streaming_services
+          : [];
+        localStorage.setItem('preferred_streaming_services', JSON.stringify(arr));
+        setPreferredServices(arr);
+      }
+      if (prefs.stats_customization_settings != null) {
+        localStorage.setItem(
+          'stats_customization_settings',
+          JSON.stringify(prefs.stats_customization_settings)
+        );
+        setStatsSettings(prefs.stats_customization_settings);
+      }
+      if (prefs.columnsExpanded) {
+        localStorage.setItem('columnsExpanded', JSON.stringify(prefs.columnsExpanded));
+        setColumnsExpanded(prefs.columnsExpanded);
+      }
+      if (prefs.defaultSorts) {
+        localStorage.setItem('defaultSorts', JSON.stringify(prefs.defaultSorts));
+        setDefaultSorts(prefs.defaultSorts);
+      }
+      if (prefs.defaultShowFavoritesFirst !== undefined) {
+        localStorage.setItem(
+          'defaultShowFavoritesFirst',
+          prefs.defaultShowFavoritesFirst.toString()
+        );
+        setDefaultShowFavoritesFirst(prefs.defaultShowFavoritesFirst);
+      }
+      if (prefs.currentSorts) {
+        const newSorts = JSON.parse(JSON.stringify(prefs.currentSorts));
+        setSorts(newSorts);
+        sortsRef.current = newSorts;
+        localStorage.setItem('currentSorts', JSON.stringify(newSorts));
+      }
+      if (prefs.currentShowFavoritesFirst !== undefined) {
+        setShowFavoritesFirst(prefs.currentShowFavoritesFirst);
+      }
+      if (prefs.currentFilters) {
+        const newFilters = JSON.parse(JSON.stringify(prefs.currentFilters));
+        setFilters(newFilters);
+        filtersRef.current = newFilters;
+        localStorage.setItem('currentFilters', JSON.stringify(newFilters));
+      }
+      if (prefs.defaultFilters != null) {
+        localStorage.setItem('defaultFilters', JSON.stringify(prefs.defaultFilters));
+      }
+      if (prefs.currentSearch != null) {
+        localStorage.setItem('currentSearch', prefs.currentSearch);
+        setSearch(prefs.currentSearch);
+      }
+      if (prefs.filterPresets) {
+        localStorage.setItem('filterPresets', JSON.stringify(prefs.filterPresets));
+        window.dispatchEvent(new CustomEvent('filterPresetsLoaded', { detail: prefs.filterPresets }));
+      }
+      if (prefs.searchHistory) {
+        localStorage.setItem('searchHistory', JSON.stringify(prefs.searchHistory));
+        setSearchHistory(prefs.searchHistory);
+      }
+    },
+    []
+  );
+
+  // Load user settings from server when user is set (login or page refresh with token)
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    getSettings()
+      .then((prefs) => {
+        if (!cancelled && prefs && typeof prefs === 'object' && Object.keys(prefs).length > 0) {
+          skipNextSaveRef.current = true;
+          applyPreferences(prefs);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn('Failed to load user settings:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, applyPreferences]);
+
+  // Persist preferences to server when they change (debounced; skip first run after load from server)
+  const SAVE_SETTINGS_DEBOUNCE_MS = 1500;
+  useEffect(() => {
+    if (!user) return;
+    const timeoutId = setTimeout(() => {
+      if (skipNextSaveRef.current) {
+        skipNextSaveRef.current = false;
+        return;
+      }
+      let filterPresets = [];
+      try {
+        const saved = localStorage.getItem('filterPresets');
+        if (saved) filterPresets = JSON.parse(saved);
+      } catch (_) {}
+      let defaultFilters = [];
+      try {
+        const saved = localStorage.getItem('defaultFilters');
+        if (saved) defaultFilters = JSON.parse(saved);
+      } catch (_) {}
+      const blob = {
+        theme: theme || 'system',
+        viewMode: viewMode || 'expanded',
+        streaming_country_code: getStoredCountry() || 'US',
+        preferred_streaming_services: preferredServices || [],
+        stats_customization_settings: statsSettings || {},
+        defaultSorts: defaultSorts || [],
+        currentSorts: sorts || [],
+        showFavoritesFirst: showFavoritesFirst,
+        defaultShowFavoritesFirst: defaultShowFavoritesFirst,
+        columnsExpanded: columnsExpanded || getDefaultColumns('expanded'),
+        currentFilters: filters || [],
+        defaultFilters,
+        currentSearch: search ?? '',
+        searchHistory: searchHistory || [],
+        filterPresets,
+      };
+      saveSettings(blob).catch((err) => console.warn('Failed to save user settings:', err));
+    }, SAVE_SETTINGS_DEBOUNCE_MS);
+    return () => clearTimeout(timeoutId);
+  }, [
+    user,
+    theme,
+    viewMode,
+    defaultSorts,
+    sorts,
+    showFavoritesFirst,
+    defaultShowFavoritesFirst,
+    columnsExpanded,
+    filters,
+    search,
+    searchHistory,
+    preferredServices,
+    statsSettings,
+  ]);
 
   const loadMovies = useCallback(
     async (reset = true) => {
@@ -2922,6 +3080,14 @@ function App() {
       currentSorts: sorts || [],
       currentShowFavoritesFirst: showFavoritesFirst,
       currentFilters: filters || [],
+      defaultFilters: (() => {
+        try {
+          const saved = localStorage.getItem('defaultFilters');
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+          return [];
+        }
+      })(),
       filterPresets: (() => {
         try {
           const saved = localStorage.getItem('filterPresets');
@@ -2938,6 +3104,9 @@ function App() {
           return [];
         }
       })(),
+      streaming_country_code: getStoredCountry() || 'US',
+      preferred_streaming_services: preferredServices || [],
+      stats_customization_settings: statsSettings || {},
     };
 
     await exportProfile(includeTmdbData, preferences);
@@ -3047,76 +3216,9 @@ function App() {
                       }
                     }
 
-                    // Restore preferences immediately - set state first
+                    // Restore preferences immediately - set state and localStorage (shared applyPreferences)
                     if (data.preferences) {
-                      const prefs = data.preferences;
-
-                      if (prefs.theme) {
-                        localStorage.setItem('theme', prefs.theme);
-                        setTheme(prefs.theme);
-                      }
-
-                      if (prefs.viewMode) {
-                        localStorage.setItem('viewMode', prefs.viewMode);
-                        setViewMode(prefs.viewMode);
-                      }
-
-                      if (prefs.columnsExpanded) {
-                        localStorage.setItem(
-                          'columnsExpanded',
-                          JSON.stringify(prefs.columnsExpanded)
-                        );
-                        setColumnsExpanded(prefs.columnsExpanded);
-                      }
-
-                      if (prefs.defaultSorts) {
-                        localStorage.setItem('defaultSorts', JSON.stringify(prefs.defaultSorts));
-                        setDefaultSorts(prefs.defaultSorts);
-                      }
-
-                      if (prefs.defaultShowFavoritesFirst !== undefined) {
-                        localStorage.setItem(
-                          'defaultShowFavoritesFirst',
-                          prefs.defaultShowFavoritesFirst.toString()
-                        );
-                        setDefaultShowFavoritesFirst(prefs.defaultShowFavoritesFirst);
-                      }
-
-                      // Set filters and sorts - always create new array references to ensure useEffect fires
-                      // The useEffect on line 638 will automatically trigger loadMovies when these change
-                      // The useEffect watches [sorts, filters, search, loadMovies], so when any change,
-                      // it will call loadMovies(true) with the updated values
-                      // Creating new array references ensures React detects the change even if values are the same
-                      // Set filters and sorts, updating both state and refs
-                      // Then reload movies which will read from refs to get the latest values
-                      if (prefs.currentSorts) {
-                        const newSorts = JSON.parse(JSON.stringify(prefs.currentSorts));
-                        setSorts(newSorts);
-                        // Update ref immediately so loadMovies can use it
-                        sortsRef.current = newSorts;
-                        localStorage.setItem('currentSorts', JSON.stringify(newSorts));
-                      }
-
-                      if (prefs.currentShowFavoritesFirst !== undefined) {
-                        setShowFavoritesFirst(prefs.currentShowFavoritesFirst);
-                      }
-
-                      if (prefs.currentFilters) {
-                        const newFilters = JSON.parse(JSON.stringify(prefs.currentFilters));
-                        setFilters(newFilters);
-                        // Update ref immediately so loadMovies can use it
-                        filtersRef.current = newFilters;
-                        localStorage.setItem('currentFilters', JSON.stringify(newFilters));
-                      }
-
-                      if (prefs.filterPresets) {
-                        localStorage.setItem('filterPresets', JSON.stringify(prefs.filterPresets));
-                      }
-
-                      if (prefs.searchHistory) {
-                        localStorage.setItem('searchHistory', JSON.stringify(prefs.searchHistory));
-                        setSearchHistory(prefs.searchHistory);
-                      }
+                      applyPreferences(data.preferences);
                     }
 
                     if (callbacks.onImportComplete) {
