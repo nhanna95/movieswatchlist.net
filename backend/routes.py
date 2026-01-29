@@ -154,7 +154,7 @@ async def get_user_settings(current_user: User = Depends(get_current_user)):
         with engine.connect() as conn:
             if is_postgresql:
                 result = conn.execute(
-                    text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+                    text(f'SELECT data FROM "{schema_name}".user_preferences WHERE id = 1')
                 )
             else:
                 result = conn.execute(
@@ -193,7 +193,7 @@ async def put_user_settings(
             if is_postgresql:
                 # Read existing
                 result = conn.execute(
-                    text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+                    text(f'SELECT data FROM "{schema_name}".user_preferences WHERE id = 1')
                 )
                 row = result.fetchone()
                 existing = row[0] if row and row[0] else None
@@ -206,11 +206,12 @@ async def put_user_settings(
                     existing = {}
                 merged = {**existing, **body}
                 # Use JSONB bindparam so the driver serializes the dict correctly (avoids CAST/string issues)
-                stmt = text('''
-                    INSERT INTO "{}".user_preferences (id, data, updated_at)
+                insert_sql = f'''
+                    INSERT INTO "{schema_name}".user_preferences (id, data, updated_at)
                     VALUES (1, :data, CURRENT_TIMESTAMP)
                     ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
-                ''').format(schema_name).bindparams(bindparam("data", type_=JSONB))
+                '''
+                stmt = text(insert_sql).bindparams(bindparam("data", type_=JSONB))
                 conn.execute(stmt, {"data": merged})
             else:
                 result = conn.execute(
