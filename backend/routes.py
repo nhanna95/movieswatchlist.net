@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, 
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case, not_
+from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case, not_, bindparam
 from typing import Optional, Dict, List, Union, Any
 from database import (
     get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
@@ -28,6 +28,7 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 from utils import get_project_root
+from sqlalchemy.dialects.postgresql import JSONB
 from profile_export import (
     export_profile_to_json,
     create_profile_zip,
@@ -170,8 +171,8 @@ async def get_user_settings(current_user: User = Depends(get_current_user)):
             except json.JSONDecodeError:
                 return {}
         return data if isinstance(data, dict) else {}
-    except Exception as e:
-        logger.warning(f"GET /api/user/settings failed: {e}")
+    except Exception:
+        logger.exception("GET /api/user/settings failed")
         return {}
 
 
@@ -204,15 +205,13 @@ async def put_user_settings(
                 elif not isinstance(existing, dict):
                     existing = {}
                 merged = {**existing, **body}
-                json_str = json.dumps(merged)
-                conn.execute(
-                    text('''
-                        INSERT INTO "{}".user_preferences (id, data, updated_at)
-                        VALUES (1, CAST(:data AS jsonb), CURRENT_TIMESTAMP)
-                        ON CONFLICT (id) DO UPDATE SET data = CAST(:data AS jsonb), updated_at = CURRENT_TIMESTAMP
-                    ''').format(schema_name),
-                    {"data": json_str}
-                )
+                # Use JSONB bindparam so the driver serializes the dict correctly (avoids CAST/string issues)
+                stmt = text('''
+                    INSERT INTO "{}".user_preferences (id, data, updated_at)
+                    VALUES (1, :data, CURRENT_TIMESTAMP)
+                    ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
+                ''').format(schema_name).bindparams(bindparam("data", type_=JSONB))
+                conn.execute(stmt, {"data": merged})
             else:
                 result = conn.execute(
                     text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
@@ -238,8 +237,10 @@ async def put_user_settings(
                 )
             conn.commit()
         return {"ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"PUT /api/user/settings failed: {e}")
+        logger.exception("PUT /api/user/settings failed")
         raise HTTPException(status_code=500, detail="Failed to save settings")
 
 
