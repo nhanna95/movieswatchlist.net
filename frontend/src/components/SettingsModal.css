@@ -410,6 +410,11 @@
   color: var(--text-primary);
 }
 
+.settings-multiselect-wrap {
+  width: 100%;
+  min-height: 38px;
+}
+
 .settings-seen-countries-add {
   margin-bottom: 16px;
 }

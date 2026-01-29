@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import './SettingsModal.css';
+import AutocompleteMultiselect from './AutocompleteMultiselect';
 import {
   getAvailableStreamingServices,
   getSeenCountries,
   addSeenCountry,
   removeSeenCountry,
+  getDirectors,
+  getFavoriteDirectors,
+  addFavoriteDirector,
+  removeFavoriteDirector,
 } from '../services/api';
 import { getStoredCountry, setStoredCountry, getCommonCountries } from '../utils/countryDetection';
 
@@ -309,8 +314,10 @@ const SettingsModal = ({ onClose, theme, setTheme }) => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [seenCountries, setSeenCountries] = useState([]);
-  const [selectedCountryToAdd, setSelectedCountryToAdd] = useState('');
   const [loadingSeenCountries, setLoadingSeenCountries] = useState(true);
+  const [favoriteDirectors, setFavoriteDirectors] = useState([]);
+  const [allDirectors, setAllDirectors] = useState([]);
+  const [loadingFavoriteDirectors, setLoadingFavoriteDirectors] = useState(true);
   const [statsSettings, setStatsSettings] = useState(() => {
     try {
       const saved = localStorage.getItem(STATS_SETTINGS_KEY);
@@ -357,6 +364,25 @@ const SettingsModal = ({ onClose, theme, setTheme }) => {
       }
     };
     loadSeenCountries();
+  }, []);
+
+  useEffect(() => {
+    const loadDirectors = async () => {
+      try {
+        setLoadingFavoriteDirectors(true);
+        const [favoritesData, directorsList] = await Promise.all([
+          getFavoriteDirectors(),
+          getDirectors(),
+        ]);
+        setFavoriteDirectors(favoritesData?.directors || []);
+        setAllDirectors(directorsList || []);
+      } catch (error) {
+        console.error('Error loading directors:', error);
+      } finally {
+        setLoadingFavoriteDirectors(false);
+      }
+    };
+    loadDirectors();
   }, []);
 
   // Handle Escape key to close modal
@@ -444,27 +470,40 @@ const SettingsModal = ({ onClose, theme, setTheme }) => {
     updateStatsSettings({ ...statsSettings, [key]: !statsSettings[key] });
   };
 
-  const handleAddSeenCountry = async (countryName) => {
-    const country = countryName || selectedCountryToAdd;
-    if (!country || seenCountries.includes(country)) {
-      return;
-    }
-    try {
-      await addSeenCountry(country);
-      setSeenCountries([...seenCountries, country]);
-      setSelectedCountryToAdd('');
-    } catch (error) {
-      console.error('Error adding seen country:', error);
-    }
+  const handleSeenCountriesChange = (newSelected) => {
+    const prev = seenCountries;
+    setSeenCountries(newSelected);
+    const toAdd = newSelected.filter((c) => !prev.includes(c));
+    const toRemove = prev.filter((c) => !newSelected.includes(c));
+    (async () => {
+      try {
+        await Promise.all([
+          ...toAdd.map((c) => addSeenCountry(c)),
+          ...toRemove.map((c) => removeSeenCountry(c)),
+        ]);
+      } catch (err) {
+        console.error('Failed to sync seen countries', err);
+        setSeenCountries(prev);
+      }
+    })();
   };
 
-  const handleRemoveSeenCountry = async (countryName) => {
-    try {
-      await removeSeenCountry(countryName);
-      setSeenCountries(seenCountries.filter((c) => c !== countryName));
-    } catch (error) {
-      console.error('Error removing seen country:', error);
-    }
+  const handleFavoriteDirectorsChange = (newSelected) => {
+    const prev = favoriteDirectors;
+    setFavoriteDirectors(newSelected);
+    const toAdd = newSelected.filter((d) => !prev.includes(d));
+    const toRemove = prev.filter((d) => !newSelected.includes(d));
+    (async () => {
+      try {
+        await Promise.all([
+          ...toAdd.map((d) => addFavoriteDirector(d)),
+          ...toRemove.map((d) => removeFavoriteDirector(d)),
+        ]);
+      } catch (err) {
+        console.error('Failed to sync favorite directors', err);
+        setFavoriteDirectors(prev);
+      }
+    })();
   };
 
   // Separate popular and other services
@@ -677,55 +716,36 @@ const SettingsModal = ({ onClose, theme, setTheme }) => {
             {loadingSeenCountries ? (
               <div className="settings-loading">Loading seen countries...</div>
             ) : (
-              <>
-                <div className="settings-seen-countries-add">
-                  <select
-                    className="settings-seen-countries-select"
-                    value={selectedCountryToAdd}
-                    onChange={(e) => {
-                      const country = e.target.value;
-                      if (country) {
-                        handleAddSeenCountry(country);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && selectedCountryToAdd) {
-                        e.preventDefault();
-                        handleAddSeenCountry(selectedCountryToAdd);
-                      }
-                    }}
-                  >
-                    <option value="">Select a country to add...</option>
-                    {ALL_COUNTRIES.filter((country) => !seenCountries.includes(country)).map(
-                      (country) => (
-                        <option key={country} value={country}>
-                          {country === 'United States of America' ? 'USA' : country}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-                {seenCountries.length > 0 ? (
-                  <div className="settings-seen-countries-list">
-                    {seenCountries.map((country) => (
-                      <div key={country} className="settings-seen-country-item">
-                        <span className="settings-seen-country-name">
-                          {country === 'United States of America' ? 'USA' : country}
-                        </span>
-                        <button
-                          className="settings-seen-country-remove"
-                          onClick={() => handleRemoveSeenCountry(country)}
-                          aria-label={`Remove ${country}`}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="settings-empty">No seen countries added yet.</div>
-                )}
-              </>
+              <div className="settings-multiselect-wrap">
+                <AutocompleteMultiselect
+                  options={ALL_COUNTRIES}
+                  selected={seenCountries}
+                  onChange={handleSeenCountriesChange}
+                  placeholder="Type to search countries..."
+                  isLoading={false}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Favorited Directors</h3>
+            <p className="settings-section-description">
+              Select directors to mark as favorites. Use the director filter to quickly show
+              movies from your favorited directors.
+            </p>
+            {loadingFavoriteDirectors ? (
+              <div className="settings-loading">Loading directors...</div>
+            ) : (
+              <div className="settings-multiselect-wrap">
+                <AutocompleteMultiselect
+                  options={allDirectors}
+                  selected={favoriteDirectors}
+                  onChange={handleFavoriteDirectorsChange}
+                  placeholder="Type to search directors..."
+                  isLoading={false}
+                />
+              </div>
             )}
           </div>
 
