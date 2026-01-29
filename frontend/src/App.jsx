@@ -2212,6 +2212,7 @@ function App() {
         if (!cancelled && prefs && typeof prefs === 'object' && Object.keys(prefs).length > 0) {
           skipNextSaveRef.current = true;
           applyPreferences(prefs);
+          window.dispatchEvent(new CustomEvent('userSettingsLoaded'));
         }
       })
       .catch((err) => {
@@ -2222,12 +2223,60 @@ function App() {
     };
   }, [user, applyPreferences]);
 
-  // When FilterBar updates presets (save/edit/delete), trigger a save to server
+  // When FilterBar updates presets (save/edit/delete), trigger debounced save and save immediately
+  // (immediate save so presets persist even if user leaves before the 1.5s debounce)
   useEffect(() => {
-    const handler = () => setSettingsSaveTrigger((prev) => prev + 1);
+    const handler = () => {
+      setSettingsSaveTrigger((prev) => prev + 1);
+      if (!user) return;
+      let filterPresets = [];
+      try {
+        const saved = localStorage.getItem('filterPresets');
+        if (saved) filterPresets = JSON.parse(saved);
+      } catch (_) {}
+      const blob = {
+        theme: theme || 'system',
+        viewMode: viewMode || 'expanded',
+        streaming_country_code: getStoredCountry() || 'US',
+        preferred_streaming_services: preferredServices || [],
+        stats_customization_settings: statsSettings || {},
+        defaultSorts: defaultSorts || [],
+        currentSorts: sorts || [],
+        showFavoritesFirst: showFavoritesFirst,
+        defaultShowFavoritesFirst: defaultShowFavoritesFirst,
+        columnsExpanded: columnsExpanded || getDefaultColumns('expanded'),
+        currentFilters: filters || [],
+        defaultFilters: (() => {
+          try {
+            const s = localStorage.getItem('defaultFilters');
+            return s ? JSON.parse(s) : [];
+          } catch (_) {
+            return [];
+          }
+        })(),
+        currentSearch: search ?? '',
+        searchHistory: searchHistory || [],
+        filterPresets,
+      };
+      saveSettings(blob).catch((err) => console.warn('Failed to save user settings:', err));
+    };
     window.addEventListener('filterPresetsChanged', handler);
     return () => window.removeEventListener('filterPresetsChanged', handler);
-  }, []);
+  }, [
+    user,
+    theme,
+    viewMode,
+    defaultSorts,
+    sorts,
+    showFavoritesFirst,
+    defaultShowFavoritesFirst,
+    columnsExpanded,
+    filters,
+    search,
+    searchHistory,
+    preferredServices,
+    statsSettings,
+  ]);
 
   // Persist preferences to server when they change (debounced; skip first run after load from server)
   const SAVE_SETTINGS_DEBOUNCE_MS = 1500;

@@ -68,6 +68,20 @@ const FilterBar = ({
     return () => window.removeEventListener('filterPresetsLoaded', handler);
   }, []);
 
+  // Fallback: when settings were loaded from server, re-read presets from localStorage
+  // (handles race where filterPresetsLoaded fired before this component mounted)
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const saved = localStorage.getItem('filterPresets');
+        const next = saved ? JSON.parse(saved) : [];
+        if (Array.isArray(next)) setPresets(next);
+      } catch (_) {}
+    };
+    window.addEventListener('userSettingsLoaded', handler);
+    return () => window.removeEventListener('userSettingsLoaded', handler);
+  }, []);
+
   const sortButtonRef = useRef(null);
   const filterMenuButtonRef = useRef(null);
   const filterMenuDropdownRef = useRef(null);
