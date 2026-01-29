@@ -24,13 +24,15 @@ app = FastAPI(
 )
 
 # Configure CORS
-# Get allowed origins from environment variable, fallback to localhost for development
+# Get allowed origins from environment variable. In production (e.g. Railway) you MUST set
+# CORS_ORIGINS to your frontend URL (e.g. https://movieswatchlist-net.vercel.app) or the
+# browser will block API requests with "No 'Access-Control-Allow-Origin' header".
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
 if cors_origins_env:
     # Split comma-separated origins from environment variable
-    allowed_origins = [origin.strip() for origin in cors_origins_env.split(",")]
+    allowed_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
 else:
-    # Default to localhost for development
+    # Default to localhost for development only
     allowed_origins = [
         "http://localhost:3000",  # React dev server
         "http://127.0.0.1:3000",  # Alternative localhost

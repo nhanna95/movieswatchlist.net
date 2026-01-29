@@ -144,30 +144,34 @@ def get_user_db(current_user: User = Depends(get_current_user)):
 async def get_user_settings(current_user: User = Depends(get_current_user)):
     """
     Get the current user's preferences/settings (JSON blob).
-    Returns {} if no row or empty data.
+    Returns {} if no row or empty data. Returns {} on error (e.g. table not yet created).
     """
-    schema_name = current_user.schema_name
-    user_id = current_user.id
-    with engine.connect() as conn:
-        if is_postgresql:
-            result = conn.execute(
-                text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
-            )
-        else:
-            result = conn.execute(
-                text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
-            )
-        row = result.fetchone()
-        conn.commit()
-    if not row or row[0] is None:
-        return {}
-    data = row[0]
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except json.JSONDecodeError:
+    try:
+        schema_name = current_user.schema_name
+        user_id = current_user.id
+        with engine.connect() as conn:
+            if is_postgresql:
+                result = conn.execute(
+                    text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+                )
+            else:
+                result = conn.execute(
+                    text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+                )
+            row = result.fetchone()
+            conn.commit()
+        if not row or row[0] is None:
             return {}
-    return data if isinstance(data, dict) else {}
+        data = row[0]
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                return {}
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning(f"GET /api/user/settings failed: {e}")
+        return {}
 
 
 @router.put("/api/user/settings")
@@ -179,58 +183,62 @@ async def put_user_settings(
     Upsert the current user's preferences/settings (JSON blob).
     Accepts partial updates; merge with existing server-side blob.
     """
-    schema_name = current_user.schema_name
-    user_id = current_user.id
-    with engine.connect() as conn:
-        if is_postgresql:
-            # Read existing
-            result = conn.execute(
-                text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
-            )
-            row = result.fetchone()
-            existing = row[0] if row and row[0] else None
-            if isinstance(existing, str):
-                try:
-                    existing = json.loads(existing)
-                except json.JSONDecodeError:
+    try:
+        schema_name = current_user.schema_name
+        user_id = current_user.id
+        with engine.connect() as conn:
+            if is_postgresql:
+                # Read existing
+                result = conn.execute(
+                    text('SELECT data FROM "{}".user_preferences WHERE id = 1').format(schema_name)
+                )
+                row = result.fetchone()
+                existing = row[0] if row and row[0] else None
+                if isinstance(existing, str):
+                    try:
+                        existing = json.loads(existing)
+                    except json.JSONDecodeError:
+                        existing = {}
+                elif not isinstance(existing, dict):
                     existing = {}
-            elif not isinstance(existing, dict):
-                existing = {}
-            merged = {**existing, **body}
-            json_str = json.dumps(merged)
-            conn.execute(
-                text('''
-                    INSERT INTO "{}".user_preferences (id, data, updated_at)
-                    VALUES (1, CAST(:data AS jsonb), CURRENT_TIMESTAMP)
-                    ON CONFLICT (id) DO UPDATE SET data = CAST(:data AS jsonb), updated_at = CURRENT_TIMESTAMP
-                ''').format(schema_name),
-                {"data": json_str}
-            )
-        else:
-            result = conn.execute(
-                text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
-            )
-            row = result.fetchone()
-            existing = row[0] if row and row[0] else None
-            if isinstance(existing, str):
-                try:
-                    existing = json.loads(existing)
-                except json.JSONDecodeError:
+                merged = {**existing, **body}
+                json_str = json.dumps(merged)
+                conn.execute(
+                    text('''
+                        INSERT INTO "{}".user_preferences (id, data, updated_at)
+                        VALUES (1, CAST(:data AS jsonb), CURRENT_TIMESTAMP)
+                        ON CONFLICT (id) DO UPDATE SET data = CAST(:data AS jsonb), updated_at = CURRENT_TIMESTAMP
+                    ''').format(schema_name),
+                    {"data": json_str}
+                )
+            else:
+                result = conn.execute(
+                    text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+                )
+                row = result.fetchone()
+                existing = row[0] if row and row[0] else None
+                if isinstance(existing, str):
+                    try:
+                        existing = json.loads(existing)
+                    except json.JSONDecodeError:
+                        existing = {}
+                elif not isinstance(existing, dict):
                     existing = {}
-            elif not isinstance(existing, dict):
-                existing = {}
-            merged = {**existing, **body}
-            json_str = json.dumps(merged)
-            conn.execute(
-                text(f'''
-                    INSERT INTO user_{user_id}_user_preferences (id, data, updated_at)
-                    VALUES (1, :data, CURRENT_TIMESTAMP)
-                    ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
-                '''),
-                {"data": json_str}
-            )
-        conn.commit()
-    return {"ok": True}
+                merged = {**existing, **body}
+                json_str = json.dumps(merged)
+                conn.execute(
+                    text(f'''
+                        INSERT INTO user_{user_id}_user_preferences (id, data, updated_at)
+                        VALUES (1, :data, CURRENT_TIMESTAMP)
+                        ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
+                    '''),
+                    {"data": json_str}
+                )
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        logger.warning(f"PUT /api/user/settings failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
 
 # Get the path to watchlist.csv (located in the project root, one level up from backend)
