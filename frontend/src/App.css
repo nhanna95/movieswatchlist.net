@@ -75,11 +75,32 @@
   white-space: nowrap;
 }
 
-.random-movie-button:hover {
+.random-movie-button:hover:not(:disabled) {
   background: var(--accent-light);
   border-color: var(--accent-primary);
   color: var(--accent-primary);
   transform: scale(1.05);
+}
+
+.random-movie-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.random-picker-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: random-picker-spin 0.7s linear infinite;
+}
+
+@keyframes random-picker-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .random-picker-dropdown {

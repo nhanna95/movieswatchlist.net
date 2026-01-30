@@ -1057,6 +1057,7 @@ def get_movies(
     availability_type: Optional[List[str]] = Query(None, description="Filter by availability type(s): for_free, for_rent, to_buy, unavailable"),
     availability_exclude: bool = Query(False, description="Exclude movies matching availability types instead of including them"),
     preferred_services: Optional[List[int]] = Query(None, description="List of preferred streaming service provider IDs for availability filtering"),
+    count_only: Optional[bool] = Query(None, description="If true, return only total count (faster for random picker)"),
     db = Depends(get_user_db)
 ):
     """
@@ -1728,226 +1729,249 @@ def get_movies(
     # Apply all sorts (excluding genres/production_company if they're the first sort)
     if order_by_list:
         query = query.order_by(*order_by_list)
-    
-    # Fetch all movies after SQL filters (before Python-based availability filtering and expansion)
-    all_movies = query.all()
-    
-    # Apply Python-based availability filtering if needed
-    if (availability_type is not None and
-        isinstance(availability_type, list) and len(availability_type) > 0 and
-        watch_region and 
-        preferred_services is not None and 
-        len(preferred_services) > 0):
-        
-        filtered_movies = []
-        for movie in all_movies:
-            matches_availability = check_movie_availability(
-                movie.tmdb_data,
-                watch_region,
-                preferred_services,
-                availability_type
-            )
-            # If availability_exclude is True, include movies that DON'T match
-            # If availability_exclude is False, include movies that DO match
-            if availability_exclude:
-                if not matches_availability:
-                    filtered_movies.append(movie)
-            else:
-                if matches_availability:
-                    filtered_movies.append(movie)
-        all_movies = filtered_movies
-    
-    # Handle expansion: if sorting by genres or production_company first, expand movies
-    if first_sort_needs_expansion and first_sort_field:
-        # Use the already-fetched (and possibly filtered) movies
-        
-        # Expand movies by genres or production_company
-        expanded_movies = []
-        for movie in all_movies:
-            if first_sort_field == 'genres':
-                movie_genres = movie.genres or []
-                if not movie_genres or len(movie_genres) == 0:
-                    # Movies with no genres appear once with empty genre
-                    expanded_movies.append((movie, None))
+
+    # Fast path: when no Python-side availability filter and no genre/production_company expansion,
+    # use DB count + offset/limit instead of loading all rows (much faster for large lists and random picker).
+    has_availability_filter = (
+        availability_type is not None
+        and isinstance(availability_type, list)
+        and len(availability_type) > 0
+        and watch_region
+        and preferred_services is not None
+        and len(preferred_services) > 0
+    )
+    use_fast_path = not has_availability_filter and not first_sort_needs_expansion
+
+    if count_only and use_fast_path:
+        total = query.count()
+        return {"movies": [], "total": total, "skip": 0, "limit": 0}
+
+    if use_fast_path and not count_only:
+        total = query.count()
+        movies = query.offset(skip).limit(limit).all()
+    else:
+        # Fetch all movies after SQL filters (before Python-based availability filtering and expansion)
+        all_movies = query.all()
+
+        # Apply Python-based availability filtering if needed
+        if (availability_type is not None and
+            isinstance(availability_type, list) and len(availability_type) > 0 and
+            watch_region and
+            preferred_services is not None and
+            len(preferred_services) > 0):
+
+            filtered_movies = []
+            for movie in all_movies:
+                matches_availability = check_movie_availability(
+                    movie.tmdb_data,
+                    watch_region,
+                    preferred_services,
+                    availability_type
+                )
+                # If availability_exclude is True, include movies that DON'T match
+                # If availability_exclude is False, include movies that DO match
+                if availability_exclude:
+                    if not matches_availability:
+                        filtered_movies.append(movie)
                 else:
-                    # Create one entry per genre
-                    for genre in sorted(movie_genres):  # Sort genres alphabetically for consistent ordering
-                        expanded_movies.append((movie, genre))
-            elif first_sort_field == 'production_company':
-                # Extract production companies from tmdb_data
-                production_companies = []
-                if movie.tmdb_data:
-                    tmdb_data = movie.tmdb_data
-                    if isinstance(tmdb_data, str):
-                        try:
-                            tmdb_data = json.loads(tmdb_data)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse tmdb_data for movie {movie.id}: {e}")
-                            tmdb_data = {}
-                    if isinstance(tmdb_data, dict):
-                        prod_companies = tmdb_data.get('production_companies', [])
-                        if prod_companies and isinstance(prod_companies, list):
-                            company_names = [company.get('name') for company in prod_companies if isinstance(company, dict) and company.get('name')]
-                            production_companies = sorted(company_names)  # Sort alphabetically
-                
-                if not production_companies or len(production_companies) == 0:
-                    # Movies with no production companies appear once with empty company
-                    expanded_movies.append((movie, None))
-                else:
-                    # Create one entry per production company
-                    for company in production_companies:
-                        expanded_movies.append((movie, company))
-            else:
-                # Fallback: should not happen, but if it does, add movie without expansion
-                logger.warning(f"Unexpected first_sort_field: {first_sort_field}, adding movie without expansion")
-                expanded_movies.append((movie, None))
-        
-        # Sort expanded movies by first sort field, then by other sorts
-        first_sort_order = sorts_list[0].get('order', 'asc') if sorts_list else 'asc'
-        other_sorts = sorts_list[1:] if len(sorts_list) > 1 else []
-        
-        def get_sort_key(item):
-            movie, first_sort_value = item
-            key = []
-            
-            # First sort by the expansion field (genre or production_company)
-            # Use sentinel value for nulls to ensure they sort last
-            if first_sort_value:
-                sort_value = first_sort_value
-            else:
-                # Use a large Unicode string that sorts after everything
-                sort_value = '\uffff' * 100
-            key.append((sort_value, first_sort_order == 'desc'))
-            
-            # Then by other sorts
-            for sort_obj in other_sorts:
-                if not isinstance(sort_obj, dict) or 'field' not in sort_obj:
-                    continue
-                field = sort_obj['field']
-                order = sort_obj.get('order', 'asc')
-                is_desc = order == 'desc'
-                
-                if field == 'title':
-                    if movie.title:
-                        value = movie.title
+                    if matches_availability:
+                        filtered_movies.append(movie)
+            all_movies = filtered_movies
+
+        # Handle expansion: if sorting by genres or production_company first, expand movies
+        if first_sort_needs_expansion and first_sort_field:
+            # Use the already-fetched (and possibly filtered) movies
+
+            # Expand movies by genres or production_company
+            expanded_movies = []
+            for movie in all_movies:
+                if first_sort_field == 'genres':
+                    movie_genres = movie.genres or []
+                    if not movie_genres or len(movie_genres) == 0:
+                        # Movies with no genres appear once with empty genre
+                        expanded_movies.append((movie, None))
                     else:
-                        # Nulls sort last: use large string
-                        value = '\uffff' * 100
-                    key.append((value, is_desc))
-                elif field == 'year':
-                    if movie.year is not None:
-                        value = movie.year
-                    else:
-                        # Nulls sort last: use inf for asc, -inf for desc
-                        value = float('inf') if not is_desc else float('-inf')
-                    key.append((value, is_desc))
-                elif field == 'runtime':
-                    if movie.runtime is not None:
-                        value = movie.runtime
-                    else:
-                        # Nulls sort last: use inf for asc, -inf for desc
-                        value = float('inf') if not is_desc else float('-inf')
-                    key.append((value, is_desc))
-                elif field == 'director':
-                    if movie.director:
-                        value = movie.director
-                    else:
-                        # Nulls sort last: use large string
-                        value = '\uffff' * 100
-                    key.append((value, is_desc))
-                elif field == 'country':
-                    if movie.country:
-                        value = movie.country
-                    else:
-                        # Nulls sort last: use large string
-                        value = '\uffff' * 100
-                    key.append((value, is_desc))
-                elif field == 'original_language':
-                    value = ''
+                        # Create one entry per genre
+                        for genre in sorted(movie_genres):  # Sort genres alphabetically for consistent ordering
+                            expanded_movies.append((movie, genre))
+                elif first_sort_field == 'production_company':
+                    # Extract production companies from tmdb_data
+                    production_companies = []
                     if movie.tmdb_data:
                         tmdb_data = movie.tmdb_data
                         if isinstance(tmdb_data, str):
                             try:
                                 tmdb_data = json.loads(tmdb_data)
-                            except:
-                                tmdb_data = {}
-                        if isinstance(tmdb_data, dict):
-                            value = tmdb_data.get('original_language', '') or ''
-                    if not value:
-                        # Nulls sort last: use large string
-                        value = '\uffff' * 100
-                    key.append((value, is_desc))
-                elif field == 'production_company':
-                    # For production_company in secondary sorts, use first company from tmdb_data
-                    value = ''
-                    if movie.tmdb_data:
-                        tmdb_data = movie.tmdb_data
-                        if isinstance(tmdb_data, str):
-                            try:
-                                tmdb_data = json.loads(tmdb_data)
-                            except:
+                            except Exception as e:
+                                logger.warning(f"Failed to parse tmdb_data for movie {movie.id}: {e}")
                                 tmdb_data = {}
                         if isinstance(tmdb_data, dict):
                             prod_companies = tmdb_data.get('production_companies', [])
-                            if prod_companies and isinstance(prod_companies, list) and len(prod_companies) > 0:
-                                first_company = prod_companies[0].get('name') if isinstance(prod_companies[0], dict) else ''
-                                value = first_company or ''
-                    if not value:
-                        # Nulls sort last: use large string
-                        value = '\uffff' * 100
-                    key.append((value, is_desc))
-                elif field == 'date_added':
-                    if movie.created_at:
-                        value = movie.created_at
+                            if prod_companies and isinstance(prod_companies, list):
+                                company_names = [company.get('name') for company in prod_companies if isinstance(company, dict) and company.get('name')]
+                                production_companies = sorted(company_names)  # Sort alphabetically
+
+                    if not production_companies or len(production_companies) == 0:
+                        # Movies with no production companies appear once with empty company
+                        expanded_movies.append((movie, None))
                     else:
-                        # Nulls sort last: use future date for asc, past date for desc
-                        value = datetime.max if not is_desc else datetime.min
-                    key.append((value, is_desc))
-                elif field == 'is_favorite':
-                    value = bool(movie.is_favorite)
-                    key.append((value, order == 'desc'))
-                elif field == 'in_collection':
-                    if movie.tmdb_data:
-                        tmdb_data = movie.tmdb_data
-                        if isinstance(tmdb_data, str):
-                            try:
-                                tmdb_data = json.loads(tmdb_data)
-                            except:
-                                tmdb_data = {}
-                        if isinstance(tmdb_data, dict):
-                            belongs_to_collection = tmdb_data.get('belongs_to_collection')
-                            value = belongs_to_collection is not None and belongs_to_collection != ''
+                        # Create one entry per production company
+                        for company in production_companies:
+                            expanded_movies.append((movie, company))
+                else:
+                    # Fallback: should not happen, but if it does, add movie without expansion
+                    logger.warning(f"Unexpected first_sort_field: {first_sort_field}, adding movie without expansion")
+                    expanded_movies.append((movie, None))
+
+            # Sort expanded movies by first sort field, then by other sorts
+            first_sort_order = sorts_list[0].get('order', 'asc') if sorts_list else 'asc'
+            other_sorts = sorts_list[1:] if len(sorts_list) > 1 else []
+
+            def get_sort_key(item):
+                movie, first_sort_value = item
+                key = []
+
+                # First sort by the expansion field (genre or production_company)
+                # Use sentinel value for nulls to ensure they sort last
+                if first_sort_value:
+                    sort_value = first_sort_value
+                else:
+                    # Use a large Unicode string that sorts after everything
+                    sort_value = '\uffff' * 100
+                key.append((sort_value, first_sort_order == 'desc'))
+
+                # Then by other sorts
+                for sort_obj in other_sorts:
+                    if not isinstance(sort_obj, dict) or 'field' not in sort_obj:
+                        continue
+                    field = sort_obj['field']
+                    order = sort_obj.get('order', 'asc')
+                    is_desc = order == 'desc'
+
+                    if field == 'title':
+                        if movie.title:
+                            value = movie.title
+                        else:
+                            # Nulls sort last: use large string
+                            value = '\uffff' * 100
+                        key.append((value, is_desc))
+                    elif field == 'year':
+                        if movie.year is not None:
+                            value = movie.year
+                        else:
+                            # Nulls sort last: use inf for asc, -inf for desc
+                            value = float('inf') if not is_desc else float('-inf')
+                        key.append((value, is_desc))
+                    elif field == 'runtime':
+                        if movie.runtime is not None:
+                            value = movie.runtime
+                        else:
+                            # Nulls sort last: use inf for asc, -inf for desc
+                            value = float('inf') if not is_desc else float('-inf')
+                        key.append((value, is_desc))
+                    elif field == 'director':
+                        if movie.director:
+                            value = movie.director
+                        else:
+                            # Nulls sort last: use large string
+                            value = '\uffff' * 100
+                        key.append((value, is_desc))
+                    elif field == 'country':
+                        if movie.country:
+                            value = movie.country
+                        else:
+                            # Nulls sort last: use large string
+                            value = '\uffff' * 100
+                        key.append((value, is_desc))
+                    elif field == 'original_language':
+                        value = ''
+                        if movie.tmdb_data:
+                            tmdb_data = movie.tmdb_data
+                            if isinstance(tmdb_data, str):
+                                try:
+                                    tmdb_data = json.loads(tmdb_data)
+                                except:
+                                    tmdb_data = {}
+                            if isinstance(tmdb_data, dict):
+                                value = tmdb_data.get('original_language', '') or ''
+                        if not value:
+                            # Nulls sort last: use large string
+                            value = '\uffff' * 100
+                        key.append((value, is_desc))
+                    elif field == 'production_company':
+                        # For production_company in secondary sorts, use first company from tmdb_data
+                        value = ''
+                        if movie.tmdb_data:
+                            tmdb_data = movie.tmdb_data
+                            if isinstance(tmdb_data, str):
+                                try:
+                                    tmdb_data = json.loads(tmdb_data)
+                                except:
+                                    tmdb_data = {}
+                            if isinstance(tmdb_data, dict):
+                                prod_companies = tmdb_data.get('production_companies', [])
+                                if prod_companies and isinstance(prod_companies, list) and len(prod_companies) > 0:
+                                    first_company = prod_companies[0].get('name') if isinstance(prod_companies[0], dict) else ''
+                                    value = first_company or ''
+                        if not value:
+                            # Nulls sort last: use large string
+                            value = '\uffff' * 100
+                        key.append((value, is_desc))
+                    elif field == 'date_added':
+                        if movie.created_at:
+                            value = movie.created_at
+                        else:
+                            # Nulls sort last: use future date for asc, past date for desc
+                            value = datetime.max if not is_desc else datetime.min
+                        key.append((value, is_desc))
+                    elif field == 'is_favorite':
+                        value = bool(movie.is_favorite)
+                        key.append((value, order == 'desc'))
+                    elif field == 'in_collection':
+                        if movie.tmdb_data:
+                            tmdb_data = movie.tmdb_data
+                            if isinstance(tmdb_data, str):
+                                try:
+                                    tmdb_data = json.loads(tmdb_data)
+                                except:
+                                    tmdb_data = {}
+                            if isinstance(tmdb_data, dict):
+                                belongs_to_collection = tmdb_data.get('belongs_to_collection')
+                                value = belongs_to_collection is not None and belongs_to_collection != ''
+                            else:
+                                value = False
                         else:
                             value = False
-                    else:
-                        value = False
-                    key.append((value, order == 'desc'))
-                # Add is_favorite handling for favorites first
-                if show_favorites_first:
-                    # Already handled in initial query sorting, but need to maintain order
-                    pass
-            
-            return key
-        
-        # Sort expanded movies
-        expanded_movies.sort(key=lambda x: get_sort_key(x))
-        
-        # Get total count from expanded list
-        total = len(expanded_movies)
-        
-        # Apply pagination to expanded list
-        paginated_expanded = expanded_movies[skip:skip + limit]
-        
-        # Extract just the movies (drop the expansion metadata)
-        movies = [movie for movie, _ in paginated_expanded]
-    else:
-        # Normal sorting path (no genre expansion)
-        # Get total count from filtered list
-        total = len(all_movies)
-        
-        # Apply pagination to filtered list
-        movies = all_movies[skip:skip + limit]
-    
+                        key.append((value, order == 'desc'))
+                    # Add is_favorite handling for favorites first
+                    if show_favorites_first:
+                        # Already handled in initial query sorting, but need to maintain order
+                        pass
+
+                return key
+
+            # Sort expanded movies
+            expanded_movies.sort(key=lambda x: get_sort_key(x))
+
+            # Get total count from expanded list
+            total = len(expanded_movies)
+
+            # Apply pagination to expanded list
+            paginated_expanded = expanded_movies[skip:skip + limit]
+
+            # Extract just the movies (drop the expansion metadata)
+            movies = [movie for movie, _ in paginated_expanded]
+        else:
+            # Normal sorting path (no genre expansion)
+            # Get total count from filtered list
+            total = len(all_movies)
+
+            # Apply pagination to filtered list
+            movies = all_movies[skip:skip + limit]
+
+        if count_only:
+            return {"movies": [], "total": total, "skip": 0, "limit": 0}
+
     # Pre-fetch tracked list memberships for all movies in one query (more efficient)
     tracked_list_columns = get_tracked_list_names()
     tracked_list_data = {}

@@ -1610,6 +1610,7 @@ function App() {
   const [dialogs, setDialogs] = useState([]);
   const [randomPickerOpen, setRandomPickerOpen] = useState(false);
   const [randomPickerOpenInMenu, setRandomPickerOpenInMenu] = useState(false);
+  const [randomPickerLoading, setRandomPickerLoading] = useState(false);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [countryCode, setCountryCode] = useState(() => {
     // Initialize from localStorage if available, otherwise default to 'US'
@@ -3587,10 +3588,11 @@ function App() {
   const handleRandomMovie = useCallback(
     async (type = 'random') => {
       try {
+        setRandomPickerLoading(true);
         // Build API params from current filters, sorts, and search (same logic as loadMovies)
         const params = {
           skip: 0,
-          limit: 1, // First fetch just to get the total count
+          limit: 1,
         };
 
         // Use refs to get current values
@@ -3670,8 +3672,9 @@ function App() {
           params.favorites_only = true;
         }
 
-        // First, get the total count of movies matching the filters
-        const countData = await getMovies(params);
+        // First, get the total count only (count_only avoids loading all rows on the backend)
+        const countParams = { ...params, count_only: true };
+        const countData = await getMovies(countParams);
         const total = countData.total || 0;
 
         if (total === 0) {
@@ -3683,7 +3686,7 @@ function App() {
           return;
         }
 
-        // Generate a random index and fetch that movie
+        // Generate a random index and fetch that single movie (backend uses offset/limit, no full load)
         const randomIndex = Math.floor(Math.random() * total);
         params.skip = randomIndex;
         params.limit = 1;
@@ -3699,6 +3702,8 @@ function App() {
       } catch (error) {
         console.error('Error fetching random movie:', error);
         addToast('Error fetching random movie', 'error');
+      } finally {
+        setRandomPickerLoading(false);
       }
     },
     [handleMovieClick, addToast]
@@ -3719,10 +3724,15 @@ function App() {
               <div className="header-action-group" ref={randomPickerRef}>
                 <button
                   className="random-movie-button"
-                  onClick={() => setRandomPickerOpen(!randomPickerOpen)}
+                  onClick={() => !randomPickerLoading && setRandomPickerOpen(!randomPickerOpen)}
                   title="Random Movie"
                   aria-label="Random Movie"
+                  disabled={randomPickerLoading}
+                  aria-busy={randomPickerLoading}
                 >
+                  {randomPickerLoading ? (
+                    <span className="random-picker-spinner" aria-hidden="true" />
+                  ) : (
                   <svg
                     width="20"
                     height="20"
@@ -3745,25 +3755,30 @@ function App() {
                     <circle cx="8" cy="16" r="1.5" fill="currentColor" />
                     <circle cx="16" cy="16" r="1.5" fill="currentColor" />
                   </svg>
-                  <span>Random Movie</span>
+                  )}
+                  <span>{randomPickerLoading ? 'Picking…' : 'Random Movie'}</span>
                 </button>
                 {randomPickerOpen && (
                   <div className="random-picker-dropdown">
                     <button
+                      type="button"
                       className="random-picker-option"
                       onClick={() => {
                         handleRandomMovie('random');
                         setRandomPickerOpen(false);
                       }}
+                      disabled={randomPickerLoading}
                     >
                       Random Movie
                     </button>
                     <button
+                      type="button"
                       className="random-picker-option"
                       onClick={() => {
                         handleRandomMovie('favorite');
                         setRandomPickerOpen(false);
                       }}
+                      disabled={randomPickerLoading}
                     >
                       Random Favorite
                     </button>
@@ -3949,9 +3964,15 @@ function App() {
                   <div className="hamburger-menu-dropdown">
                     <div className="hamburger-menu-item-group" ref={randomPickerRef}>
                       <button
+                        type="button"
                         className="hamburger-menu-item"
-                        onClick={() => setRandomPickerOpenInMenu(!randomPickerOpenInMenu)}
+                        onClick={() => !randomPickerLoading && setRandomPickerOpenInMenu(!randomPickerOpenInMenu)}
+                        disabled={randomPickerLoading}
+                        aria-busy={randomPickerLoading}
                       >
+                        {randomPickerLoading ? (
+                          <span className="random-picker-spinner" aria-hidden="true" />
+                        ) : (
                         <svg
                           width="20"
                           height="20"
@@ -3974,27 +3995,32 @@ function App() {
                           <circle cx="8" cy="16" r="1.5" fill="currentColor" />
                           <circle cx="16" cy="16" r="1.5" fill="currentColor" />
                         </svg>
-                        <span>Random Movie</span>
+                        )}
+                        <span>{randomPickerLoading ? 'Picking…' : 'Random Movie'}</span>
                       </button>
                       {randomPickerOpenInMenu && (
                         <div className="hamburger-menu-submenu">
                           <button
+                            type="button"
                             className="hamburger-menu-submenu-item"
                             onClick={() => {
                               handleRandomMovie('random');
                               setRandomPickerOpenInMenu(false);
                               setIsHamburgerMenuOpen(false);
                             }}
+                            disabled={randomPickerLoading}
                           >
                             Random Movie
                           </button>
                           <button
+                            type="button"
                             className="hamburger-menu-submenu-item"
                             onClick={() => {
                               handleRandomMovie('favorite');
                               setRandomPickerOpenInMenu(false);
                               setIsHamburgerMenuOpen(false);
                             }}
+                            disabled={randomPickerLoading}
                           >
                             Random Favorite
                           </button>
