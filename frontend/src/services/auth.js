@@ -129,15 +129,17 @@ const createAuthAxios = () => {
  */
 export const register = async (username, password) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/api/auth/register`, {
-      username,
-      password,
-    });
+    const token = getToken();
+    const response = await axios.post(
+      `${API_BASE_URL}/api/auth/register`,
+      { username, password },
+      { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+    );
 
     const { access_token } = response.data;
     setToken(access_token);
+    setGuestSessionId(null);
 
-    // Fetch user info and store it
     const userResponse = await fetchCurrentUser();
     if (userResponse) {
       setStoredUser(userResponse);
@@ -160,21 +162,22 @@ export const register = async (username, password) => {
  */
 export const login = async (username, password) => {
   try {
-    // OAuth2 password flow requires form data
     const formData = new URLSearchParams();
     formData.append('username', username);
     formData.append('password', password);
 
+    const token = getToken();
     const response = await axios.post(`${API_BASE_URL}/api/auth/login`, formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
     const { access_token } = response.data;
     setToken(access_token);
+    setGuestSessionId(null);
 
-    // Fetch user info and store it
     const userResponse = await fetchCurrentUser();
     if (userResponse) {
       setStoredUser(userResponse);

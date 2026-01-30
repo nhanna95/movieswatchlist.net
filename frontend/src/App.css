@@ -57,11 +57,30 @@
 }
 
 .guest-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
   background: var(--accent-primary);
   color: #fff;
   text-align: center;
   padding: 8px 16px;
   font-size: 0.9rem;
+}
+
+.guest-mode-banner-exit {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.guest-mode-banner-exit:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .guest-mode-badge {
@@ -222,6 +241,22 @@
   border-color: #ef4444;
   color: #ef4444;
   transform: scale(1.05);
+}
+
+.logout-button.login-button-guest {
+  width: auto;
+  padding: 10px 18px;
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.logout-button.login-button-guest:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .theme-toggle {

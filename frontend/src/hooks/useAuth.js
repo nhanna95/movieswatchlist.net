@@ -82,6 +82,7 @@ export const AuthProvider = ({ children }) => {
       await authLogin(username, password);
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
+      setGuestMode(false);
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || 'Login failed';
@@ -102,6 +103,7 @@ export const AuthProvider = ({ children }) => {
       await authRegister(username, password);
       const currentUser = await fetchCurrentUser();
       setUser(currentUser);
+      setGuestMode(false);
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || 'Registration failed';

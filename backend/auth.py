@@ -377,6 +377,29 @@ async def get_current_guest(
     )
 
 
+async def get_current_guest_optional(
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> Optional[GuestSession]:
+    """
+    Dependency to optionally get the current guest session.
+    Returns None if no token, invalid token, or not a guest token (does not raise).
+    """
+    if token is None:
+        return None
+    token_data = decode_token(token)
+    if token_data is None or not token_data.guest or not token_data.session_id:
+        return None
+    meta = get_registered_guest_session(token_data.session_id)
+    if not meta:
+        return None
+    return GuestSession(
+        session_id=token_data.session_id,
+        schema_name=meta["schema_name"],
+        created_at=meta["created_at"],
+        expires_at=meta["expires_at"],
+    )
+
+
 async def get_current_user_or_guest(
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),

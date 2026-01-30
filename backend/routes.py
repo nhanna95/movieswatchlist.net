@@ -7,7 +7,7 @@ from typing import Optional, Dict, List, Union, Any
 from database import (
     get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
     get_user_db_session, get_user_db_context, get_guest_db_session, UserScopedSession, get_user_schema_name, migrate_user_schema,
-    drop_guest_session, cleanup_expired_guest_schemas,
+    drop_guest_session, cleanup_expired_guest_schemas, migrate_guest_data_to_user,
     engine
 )
 from models import Movie, FavoriteDirector, SeenCountry, User
@@ -16,6 +16,7 @@ from list_processor import process_all_tracked_lists, check_movie_in_tracked_lis
 from tmdb_client import tmdb_client, extract_enriched_data_from_tmdb
 from auth import (
     get_current_user, get_current_user_optional, get_current_user_or_guest, get_current_guest,
+    get_current_guest_optional,
     UserCreate, UserLogin, UserResponse, Token, GuestSession,
     create_user, authenticate_user, create_access_token, create_guest_session,
     get_user_by_username
@@ -48,49 +49,56 @@ router = APIRouter()
 # ==========================================
 
 @router.post("/api/auth/register", response_model=Token)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+async def register(
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+    guest: Optional[GuestSession] = Depends(get_current_guest_optional),
+):
     """
     Register a new user account.
     Creates a new user and their dedicated database schema.
+    If request includes a valid guest token, migrates guest data to the new account.
     """
-    # Check if username already exists
     if get_user_by_username(db, user_data.username):
         raise HTTPException(
             status_code=400,
             detail="Username already registered"
         )
-    
-    # Create the user (this also creates their schema)
+
     user = create_user(db, user_data)
-    
-    # Generate access token
+    if guest is not None:
+        migrate_guest_data_to_user(guest.session_id, user.id)
+
     access_token = create_access_token(
         data={"user_id": user.id, "username": user.username}
     )
-    
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.post("/api/auth/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+    guest: Optional[GuestSession] = Depends(get_current_guest_optional),
+):
     """
     Login with username and password.
     Returns a JWT access token.
+    If request includes a valid guest token, migrates guest data to the user account.
     """
     user = authenticate_user(db, form_data.username, form_data.password)
-    
     if not user:
         raise HTTPException(
             status_code=401,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Generate access token
+    if guest is not None:
+        migrate_guest_data_to_user(guest.session_id, user.id)
+
     access_token = create_access_token(
         data={"user_id": user.id, "username": user.username}
     )
-    
     return {"access_token": access_token, "token_type": "bearer"}
 
 

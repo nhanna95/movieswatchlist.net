@@ -38,8 +38,8 @@ import { formatRuntime } from './utils';
 import { detectCountry, setStoredCountry, getStoredCountry } from './utils/countryDetection';
 import './components/UploadCSV.css';
 
-// LogoutButton Component - uses the auth hook to log out or exit guest
-const LogoutButton = () => {
+// LogoutButton / Login button - in guest mode shows "Login", otherwise logout
+const LogoutButton = ({ setShowAuthModal }) => {
   const { logout, exitGuestMode, guestMode, user } = useAuth();
 
   const handleLogout = async () => {
@@ -55,15 +55,27 @@ const LogoutButton = () => {
     }
   };
 
-  const title = guestMode ? 'Exit guest' : (user ? `Logout (${user.username})` : 'Logout');
-  const ariaLabel = guestMode ? 'Exit guest' : 'Logout';
+  if (guestMode && setShowAuthModal) {
+    return (
+      <button
+        type="button"
+        className="logout-button login-button-guest"
+        onClick={() => setShowAuthModal(true)}
+        title="Login to save your list"
+        aria-label="Login"
+      >
+        Login
+      </button>
+    );
+  }
 
+  const title = user ? `Logout (${user.username})` : 'Logout';
   return (
     <button
       className="logout-button"
       onClick={handleLogout}
       title={title}
-      aria-label={ariaLabel}
+      aria-label="Logout"
     >
       <svg
         width="24"
@@ -1541,7 +1553,7 @@ const ImportExportModal = ({
   );
 };
 
-function App() {
+function App({ setShowAuthModal }) {
   const { user, logout, exitGuestMode, guestMode } = useAuth();
 
   // Get system theme preference
@@ -3724,7 +3736,19 @@ function App() {
       <header className="app-header">
         {guestMode && (
           <div className="guest-mode-banner" role="status">
-            Guest mode — data is temporary and will not be saved. Sign up to save your list.
+            <span>Guest mode — data is temporary and will not be saved. Sign up to save your list.</span>
+            <button
+              type="button"
+              className="guest-mode-banner-exit"
+              onClick={async () => {
+                if (window.confirm('Exit guest mode? Your data will not be saved.')) {
+                  await exitGuestMode();
+                }
+              }}
+              aria-label="Exit guest"
+            >
+              Exit guest
+            </button>
           </div>
         )}
         <div className="header-content" ref={headerContainerRef}>
@@ -3950,7 +3974,7 @@ function App() {
                   />
                 </svg>
               </button>
-              <LogoutButton />
+              <LogoutButton setShowAuthModal={setShowAuthModal} />
             </div>
             <div
               className={`header-actions-hamburger ${!showHamburgerMenu ? 'header-actions-hidden' : ''}`}
@@ -4200,20 +4224,19 @@ function App() {
                     <button
                       className="hamburger-menu-item"
                       onClick={async () => {
-                        const message = guestMode
-                          ? 'Exit guest mode? Your data will not be saved.'
-                          : 'Are you sure you want to log out?';
+                        if (guestMode && setShowAuthModal) {
+                          setShowAuthModal(true);
+                          setIsHamburgerMenuOpen(false);
+                          return;
+                        }
+                        const message = 'Are you sure you want to log out?';
                         if (window.confirm(message)) {
-                          if (guestMode) {
-                            await exitGuestMode();
-                          } else {
-                            await logout();
-                          }
+                          await logout();
                           setIsHamburgerMenuOpen(false);
                         }
                       }}
-                      title={guestMode ? 'Exit guest' : (user ? `Logout (${user.username})` : 'Logout')}
-                      aria-label={guestMode ? 'Exit guest' : 'Logout'}
+                      title={guestMode ? 'Login to save your list' : (user ? `Logout (${user.username})` : 'Logout')}
+                      aria-label={guestMode ? 'Login' : 'Logout'}
                     >
                       <svg
                         width="24"
@@ -4247,7 +4270,7 @@ function App() {
                           strokeLinejoin="round"
                         />
                       </svg>
-                      <span>{guestMode ? 'Exit guest' : 'Logout'}</span>
+                      <span>{guestMode ? 'Login' : 'Logout'}</span>
                     </button>
                   </div>
                 )}
@@ -4649,10 +4672,11 @@ function App() {
 
 // Wrapper component that provides authentication context
 function AppWithAuth() {
+  const [showAuthModal, setShowAuthModal] = useState(false);
   return (
     <AuthProvider>
-      <AuthGuard>
-        <App />
+      <AuthGuard showAuthModal={showAuthModal} setShowAuthModal={setShowAuthModal}>
+        <App setShowAuthModal={setShowAuthModal} />
       </AuthGuard>
     </AuthProvider>
   );

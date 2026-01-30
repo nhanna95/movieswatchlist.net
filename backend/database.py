@@ -257,6 +257,11 @@ def create_guest_tables_sqlite(session_id: str):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         '''))
+        for col in get_tracked_list_names():
+            try:
+                conn.execute(text(f'ALTER TABLE {prefix}movies ADD COLUMN {col} INTEGER DEFAULT 0'))
+            except Exception as e:
+                logger.debug(f"Column {col} may already exist: {e}")
         conn.commit()
         logger.info(f"Created SQLite guest tables with prefix: {prefix}")
 
@@ -409,6 +414,74 @@ def cleanup_expired_guest_schemas() -> int:
     if expired:
         logger.info(f"Cleaned up {len(expired)} expired guest schema(s)")
     return len(expired)
+
+
+def migrate_guest_data_to_user(guest_session_id: str, user_id: int) -> None:
+    """
+    Copy all data from the guest schema into the user's schema, then drop the guest session.
+    Handles PostgreSQL (schemas) and SQLite (prefixed tables).
+    """
+    guest_schema = get_guest_schema_name(guest_session_id)
+    user_schema = get_user_schema_name(user_id)
+    tracked_cols = get_tracked_list_names()
+    movies_cols_no_id = [
+        "title", "year", "letterboxd_uri", "director", "country", "runtime",
+        "genres", "tmdb_id", "tmdb_data", "is_favorite", "seen_before", "notes",
+        "created_at", "updated_at"
+    ] + tracked_cols
+
+    with engine.begin() as conn:
+        try:
+            if is_postgresql:
+                g = f'"{guest_schema}"'
+                u = f'"{user_schema}"'
+                cols = ", ".join(movies_cols_no_id)
+                conn.execute(text(f'''
+                    INSERT INTO {u}.movies ({cols})
+                    SELECT {cols} FROM {g}.movies
+                    ON CONFLICT (letterboxd_uri) DO NOTHING
+                '''))
+                conn.execute(text(f'''
+                    INSERT INTO {u}.favorite_directors (director_name, created_at)
+                    SELECT director_name, created_at FROM {g}.favorite_directors
+                    ON CONFLICT (director_name) DO NOTHING
+                '''))
+                conn.execute(text(f'''
+                    INSERT INTO {u}.seen_countries (country_name, created_at)
+                    SELECT country_name, created_at FROM {g}.seen_countries
+                    ON CONFLICT (country_name) DO NOTHING
+                '''))
+                conn.execute(text(f'''
+                    INSERT INTO {u}.user_preferences (id, data, updated_at)
+                    SELECT id, data, updated_at FROM {g}.user_preferences
+                    ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at
+                '''))
+            else:
+                g_prefix = f"{guest_schema}_"
+                u_prefix = f"user_{user_id}_"
+                cols = ", ".join(movies_cols_no_id)
+                conn.execute(text(f'''
+                    INSERT OR IGNORE INTO {u_prefix}movies ({cols})
+                    SELECT {cols} FROM {g_prefix}movies
+                '''))
+                conn.execute(text(f'''
+                    INSERT OR IGNORE INTO {u_prefix}favorite_directors (director_name, created_at)
+                    SELECT director_name, created_at FROM {g_prefix}favorite_directors
+                '''))
+                conn.execute(text(f'''
+                    INSERT OR IGNORE INTO {u_prefix}seen_countries (country_name, created_at)
+                    SELECT country_name, created_at FROM {g_prefix}seen_countries
+                '''))
+                conn.execute(text(f'''
+                    INSERT INTO {u_prefix}user_preferences (id, data, updated_at)
+                    SELECT id, data, updated_at FROM {g_prefix}user_preferences
+                    ON CONFLICT (id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+                '''))
+            logger.info(f"Migrated guest data from {guest_schema} to user {user_id}")
+        except Exception as e:
+            logger.exception(f"Guest migration failed: {e}")
+            raise
+    drop_guest_session(guest_session_id)
 
 
 def get_tracked_list_names():

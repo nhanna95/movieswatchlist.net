@@ -7,10 +7,25 @@ import './AuthGuard.css';
 /**
  * AuthGuard component that protects routes requiring authentication.
  * Always renders children (app shell). When not authenticated, shows Login or Register as a modal overlay.
+ * When guestMode and showAuthModal, also shows the auth overlay (e.g. user clicked "Login" in header).
  */
-const AuthGuard = ({ children }) => {
-  const { isAuthenticated, loading, error, login, register, startGuestMode } = useAuth();
-  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+const AuthGuard = ({ children, showAuthModal = false, setShowAuthModal }) => {
+  const { isAuthenticated, loading, error, login, register, startGuestMode, guestMode } = useAuth();
+  const [authMode, setAuthMode] = useState('login');
+
+  const showOverlay = !loading && ((!isAuthenticated) || (guestMode && showAuthModal));
+
+  const handleLoginSuccess = async (username, password) => {
+    const result = await login(username, password);
+    if (result?.success && setShowAuthModal) setShowAuthModal(false);
+    return result;
+  };
+
+  const handleRegisterSuccess = async (username, password) => {
+    const result = await register(username, password);
+    if (result?.success && setShowAuthModal) setShowAuthModal(false);
+    return result;
+  };
 
   return (
     <>
@@ -21,21 +36,23 @@ const AuthGuard = ({ children }) => {
           <p>Loading...</p>
         </div>
       )}
-      {!loading && !isAuthenticated && authMode === 'login' && (
+      {showOverlay && authMode === 'login' && (
         <Login
           asModal
-          onLogin={login}
+          onLogin={handleLoginSuccess}
           onSwitchToRegister={() => setAuthMode('register')}
-          onStartGuest={startGuestMode}
+          onStartGuest={!showAuthModal ? startGuestMode : undefined}
+          onClose={guestMode && setShowAuthModal ? () => setShowAuthModal(false) : undefined}
           error={error}
           loading={loading}
         />
       )}
-      {!loading && !isAuthenticated && authMode === 'register' && (
+      {showOverlay && authMode === 'register' && (
         <Register
           asModal
-          onRegister={register}
+          onRegister={handleRegisterSuccess}
           onSwitchToLogin={() => setAuthMode('login')}
+          onClose={guestMode && setShowAuthModal ? () => setShowAuthModal(false) : undefined}
           error={error}
           loading={loading}
         />

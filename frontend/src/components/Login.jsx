@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import './Login.css';
 
-const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, error, loading }) => {
+const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, onClose, error, loading }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -31,11 +31,14 @@ const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, error, load
   const overlayClass = asModal ? 'auth-overlay auth-overlay-modal' : 'auth-overlay';
 
   return createPortal(
-    <div className={overlayClass}>
+    <div className={overlayClass} onClick={onClose && (e) => e.target === e.currentTarget && onClose()}>
       <div className="auth-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>
           <p>Sign in to your account</p>
+          {onClose && (
+            <button type="button" className="auth-close" onClick={onClose} aria-label="Close">×</button>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
@@ -91,6 +94,13 @@ const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, error, load
         </form>
 
         <div className="auth-footer">
+          {onClose && (
+            <p>
+              <button type="button" className="auth-link" onClick={onClose} disabled={loading}>
+                Cancel
+              </button>
+            </p>
+          )}
           <p>
             Don't have an account?{' '}
             <button

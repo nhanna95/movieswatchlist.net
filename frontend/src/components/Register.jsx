@@ -6,7 +6,7 @@ import './Register.css';
 
 const SECURITY_WARNING_ACCEPTED_KEY = 'security_warning_accepted';
 
-const Register = ({ asModal, onRegister, onSwitchToLogin, error, loading }) => {
+const Register = ({ asModal, onRegister, onSwitchToLogin, onClose, error, loading }) => {
   // Always show the security warning when the user opens the register page
   const [showSecurityWarning, setShowSecurityWarning] = useState(true);
   const [warningAccepted, setWarningAccepted] = useState(false);
@@ -67,11 +67,14 @@ const Register = ({ asModal, onRegister, onSwitchToLogin, error, loading }) => {
 
   return createPortal(
     <>
-      <div className={overlayClass}>
+      <div className={overlayClass} onClick={onClose && (e) => e.target === e.currentTarget && onClose()}>
         <div className="auth-container register-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>
           <p>Create your account</p>
+          {onClose && (
+            <button type="button" className="auth-close" onClick={onClose} aria-label="Close">×</button>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
@@ -131,6 +134,13 @@ const Register = ({ asModal, onRegister, onSwitchToLogin, error, loading }) => {
         </form>
 
         <div className="auth-footer">
+          {onClose && (
+            <p>
+              <button type="button" className="auth-link" onClick={onClose} disabled={loading}>
+                Cancel
+              </button>
+            </p>
+          )}
           <p>
             Already have an account?{' '}
             <button
