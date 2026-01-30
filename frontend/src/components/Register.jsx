@@ -3,15 +3,32 @@ import { createPortal } from 'react-dom';
 import SecurityWarningModal from './SecurityWarningModal';
 import './Register.css';
 
+const SECURITY_WARNING_ACCEPTED_KEY = 'security_warning_accepted';
+
+const getInitialSecurityWarningState = () => {
+  try {
+    return sessionStorage.getItem(SECURITY_WARNING_ACCEPTED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
 const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
-  const [showSecurityWarning, setShowSecurityWarning] = useState(true);
-  const [warningAccepted, setWarningAccepted] = useState(false);
+  const [showSecurityWarning, setShowSecurityWarning] = useState(
+    () => !getInitialSecurityWarningState()
+  );
+  const [warningAccepted, setWarningAccepted] = useState(getInitialSecurityWarningState);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState(null);
 
   const handleSecurityWarningAccept = () => {
+    try {
+      sessionStorage.setItem(SECURITY_WARNING_ACCEPTED_KEY, 'true');
+    } catch {
+      // ignore storage errors
+    }
     setWarningAccepted(true);
     setShowSecurityWarning(false);
   };
