@@ -6,19 +6,10 @@ import './Register.css';
 
 const SECURITY_WARNING_ACCEPTED_KEY = 'security_warning_accepted';
 
-const getInitialSecurityWarningState = () => {
-  try {
-    return sessionStorage.getItem(SECURITY_WARNING_ACCEPTED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-};
-
 const Register = ({ asModal, onRegister, onSwitchToLogin, error, loading }) => {
-  const [showSecurityWarning, setShowSecurityWarning] = useState(
-    () => !getInitialSecurityWarningState()
-  );
-  const [warningAccepted, setWarningAccepted] = useState(getInitialSecurityWarningState);
+  // Always show the security warning when the user opens the register page
+  const [showSecurityWarning, setShowSecurityWarning] = useState(true);
+  const [warningAccepted, setWarningAccepted] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
