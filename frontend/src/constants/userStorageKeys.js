@@ -7,6 +7,8 @@ export const USER_STORAGE_KEYS = [
   // Auth
   'auth_token',
   'auth_user',
+  'guest_mode',
+  'guest_session_id',
   // UI / preferences
   'theme',
   'viewMode',

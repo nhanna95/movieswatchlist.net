@@ -6,10 +6,14 @@ from utils import get_project_root
 import logging
 from pathlib import Path
 import re
-from typing import Generator, Optional
+from typing import Generator, Optional, Dict, Any
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+# In-memory store for guest session metadata (for cleanup). Lost on restart.
+_guest_sessions: Dict[str, Dict[str, Any]] = {}
 
 # Configure connect_args based on database type
 # SQLite requires check_same_thread=False, PostgreSQL doesn't need it
@@ -40,6 +44,13 @@ def get_db():
 def get_user_schema_name(user_id: int) -> str:
     """Generate a schema name from user ID."""
     return f"user_{user_id}"
+
+
+def get_guest_schema_name(session_id: str) -> str:
+    """Generate a schema/prefix name for a guest session. Safe for PostgreSQL and SQLite."""
+    # Replace hyphens so UUIDs are valid identifiers (e.g. guest_a1b2c3d4_e5f6_...)
+    sanitized = session_id.replace("-", "_")
+    return f"guest_{sanitized}"
 
 
 def create_user_schema(user_id: int) -> str:
@@ -200,6 +211,76 @@ def create_user_tables_sqlite(user_id: int):
         logger.info(f"Created SQLite tables with prefix: {prefix}")
 
 
+def create_guest_tables_sqlite(session_id: str):
+    """Create guest-specific tables for SQLite using table prefix guest_<session_id>_."""
+    schema_name = get_guest_schema_name(session_id)
+    prefix = f"{schema_name}_"
+
+    with engine.connect() as conn:
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS {prefix}movies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                year INTEGER,
+                letterboxd_uri TEXT UNIQUE,
+                director TEXT,
+                country TEXT,
+                runtime INTEGER,
+                genres TEXT,
+                tmdb_id INTEGER,
+                tmdb_data TEXT,
+                is_favorite INTEGER DEFAULT 0,
+                seen_before INTEGER DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+        '''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS {prefix}favorite_directors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                director_name TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS {prefix}seen_countries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                country_name TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS {prefix}user_preferences (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        conn.commit()
+        logger.info(f"Created SQLite guest tables with prefix: {prefix}")
+
+
+def create_guest_schema(session_id: str) -> str:
+    """
+    Create a new schema (PostgreSQL) or prefixed tables (SQLite) for a guest session.
+    Returns the schema name.
+    """
+    schema_name = get_guest_schema_name(session_id)
+
+    with engine.connect() as conn:
+        if is_postgresql:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
+            conn.commit()
+            logger.info(f"Created guest schema: {schema_name}")
+            create_user_tables_in_schema(schema_name)
+        else:
+            logger.info(f"SQLite mode: Creating guest tables with prefix for session {session_id}")
+            create_guest_tables_sqlite(session_id)
+
+    return schema_name
+
+
 class UserScopedSession:
     """A session wrapper that automatically scopes queries to a user's schema."""
     
@@ -251,6 +332,85 @@ def get_user_db_context(user_id: int, schema_name: str):
         session.close()
 
 
+def get_guest_db_session(session_id: str) -> Generator[UserScopedSession, None, None]:
+    """
+    Get a database session scoped to a guest session's schema/prefix.
+    Uses sentinel user_id=-1 for guest so routes can branch on user_id for raw SQL (e.g. SQLite prefix).
+    """
+    schema_name = get_guest_schema_name(session_id)
+    session = SessionLocal()
+    try:
+        guest_session = UserScopedSession(session, schema_name, -1)
+        yield guest_session
+    finally:
+        session.close()
+
+
+def register_guest_session(session_id: str, expires_at: datetime) -> None:
+    """Register a guest session for later cleanup. In-memory only."""
+    schema_name = get_guest_schema_name(session_id)
+    _guest_sessions[session_id] = {
+        "schema_name": schema_name,
+        "created_at": datetime.utcnow(),
+        "expires_at": expires_at,
+    }
+    logger.debug(f"Registered guest session {session_id}, expires at {expires_at}")
+
+
+def get_registered_guest_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Return guest session metadata if registered and not expired."""
+    meta = _guest_sessions.get(session_id)
+    if not meta:
+        return None
+    if datetime.utcnow() > meta["expires_at"]:
+        _guest_sessions.pop(session_id, None)
+        return None
+    return meta
+
+
+def _drop_guest_schema(session_id: str) -> None:
+    """Drop a single guest schema (PostgreSQL) or guest tables (SQLite)."""
+    schema_name = get_guest_schema_name(session_id)
+    with engine.connect() as conn:
+        if is_postgresql:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+            conn.commit()
+            logger.info(f"Dropped guest schema: {schema_name}")
+        else:
+            prefix = f"{schema_name}_"
+            for table_suffix in ("movies", "favorite_directors", "seen_countries", "user_preferences"):
+                conn.execute(text(f"DROP TABLE IF EXISTS {prefix}{table_suffix}"))
+            conn.commit()
+            logger.info(f"Dropped SQLite guest tables with prefix: {prefix}")
+
+
+def drop_guest_session(session_id: str) -> None:
+    """Drop a single guest session's schema/tables and remove from registry (e.g. on explicit logout)."""
+    try:
+        _drop_guest_schema(session_id)
+    except Exception as e:
+        logger.warning(f"Failed to drop guest schema {session_id}: {e}")
+    _guest_sessions.pop(session_id, None)
+
+
+def cleanup_expired_guest_schemas() -> int:
+    """
+    Remove guest schemas/tables whose session has expired (older than 24h).
+    Returns the number of schemas cleaned up.
+    """
+    now = datetime.utcnow()
+    expired = [sid for sid, meta in _guest_sessions.items() if meta["expires_at"] < now]
+    for session_id in expired:
+        try:
+            _drop_guest_schema(session_id)
+        except Exception as e:
+            logger.warning(f"Failed to drop guest schema {session_id}: {e}")
+        _guest_sessions.pop(session_id, None)
+    if expired:
+        logger.info(f"Cleaned up {len(expired)} expired guest schema(s)")
+    return len(expired)
+
+
 def get_tracked_list_names():
     """
     Scan tracked-lists directory and return list of tracked list names.
@@ -290,7 +450,10 @@ def filename_to_column_name(filename):
 def migrate_user_schema(schema_name: str):
     """
     Migrate a user's schema to add new columns and tables if they don't exist.
+    Guest schemas are created with full structure; skip migration for them.
     """
+    if schema_name.startswith("guest_"):
+        return
     with engine.connect() as conn:
         if is_postgresql:
             # Check if movies table exists in the schema

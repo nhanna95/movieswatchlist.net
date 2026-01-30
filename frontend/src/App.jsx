@@ -38,22 +38,32 @@ import { formatRuntime } from './utils';
 import { detectCountry, setStoredCountry, getStoredCountry } from './utils/countryDetection';
 import './components/UploadCSV.css';
 
-// LogoutButton Component - uses the auth hook to log out
+// LogoutButton Component - uses the auth hook to log out or exit guest
 const LogoutButton = () => {
-  const { logout, user } = useAuth();
+  const { logout, exitGuestMode, guestMode, user } = useAuth();
 
   const handleLogout = async () => {
-    if (window.confirm('Are you sure you want to log out?')) {
-      await logout();
+    const message = guestMode
+      ? 'Exit guest mode? Your data will not be saved.'
+      : 'Are you sure you want to log out?';
+    if (window.confirm(message)) {
+      if (guestMode) {
+        await exitGuestMode();
+      } else {
+        await logout();
+      }
     }
   };
+
+  const title = guestMode ? 'Exit guest' : (user ? `Logout (${user.username})` : 'Logout');
+  const ariaLabel = guestMode ? 'Exit guest' : 'Logout';
 
   return (
     <button
       className="logout-button"
       onClick={handleLogout}
-      title={user ? `Logout (${user.username})` : 'Logout'}
-      aria-label="Logout"
+      title={title}
+      aria-label={ariaLabel}
     >
       <svg
         width="24"
@@ -1532,7 +1542,7 @@ const ImportExportModal = ({
 };
 
 function App() {
-  const { user, logout } = useAuth();
+  const { user, logout, exitGuestMode, guestMode } = useAuth();
 
   // Get system theme preference
   const getSystemTheme = useCallback(() => {
@@ -3712,10 +3722,18 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
+        {guestMode && (
+          <div className="guest-mode-banner" role="status">
+            Guest mode — data is temporary and will not be saved. Sign up to save your list.
+          </div>
+        )}
         <div className="header-content" ref={headerContainerRef}>
           <div ref={headerTitleRef}>
             <h1>movieswatchlist.net</h1>
             <p>Sort and filter your watchlist movies</p>
+            {guestMode && (
+              <span className="guest-mode-badge" title="You are using a temporary guest session">Guest</span>
+            )}
           </div>
           <div className="header-actions" ref={headerActionsRef}>
             <div
@@ -4182,13 +4200,20 @@ function App() {
                     <button
                       className="hamburger-menu-item"
                       onClick={async () => {
-                        if (window.confirm('Are you sure you want to log out?')) {
-                          await logout();
+                        const message = guestMode
+                          ? 'Exit guest mode? Your data will not be saved.'
+                          : 'Are you sure you want to log out?';
+                        if (window.confirm(message)) {
+                          if (guestMode) {
+                            await exitGuestMode();
+                          } else {
+                            await logout();
+                          }
                           setIsHamburgerMenuOpen(false);
                         }
                       }}
-                      title={user ? `Logout (${user.username})` : 'Logout'}
-                      aria-label="Logout"
+                      title={guestMode ? 'Exit guest' : (user ? `Logout (${user.username})` : 'Logout')}
+                      aria-label={guestMode ? 'Exit guest' : 'Logout'}
                     >
                       <svg
                         width="24"
@@ -4222,7 +4247,7 @@ function App() {
                           strokeLinejoin="round"
                         />
                       </svg>
-                      <span>Logout</span>
+                      <span>{guestMode ? 'Exit guest' : 'Logout'}</span>
                     </button>
                   </div>
                 )}

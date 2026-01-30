@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import './Login.css';
 
-const Login = ({ asModal, onLogin, onSwitchToRegister, error, loading }) => {
+const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, error, loading }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -77,6 +77,17 @@ const Login = ({ asModal, onLogin, onSwitchToRegister, error, loading }) => {
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+
+          {onStartGuest && (
+            <button
+              type="button"
+              className="auth-button secondary"
+              disabled={loading}
+              onClick={onStartGuest}
+            >
+              Continue as Guest
+            </button>
+          )}
         </form>
 
         <div className="auth-footer">

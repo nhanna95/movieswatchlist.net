@@ -13,3 +13,4 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+GUEST_EXPIRATION_HOURS = int(os.getenv("GUEST_EXPIRATION_HOURS", "24"))

@@ -6,7 +6,8 @@ from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case
 from typing import Optional, Dict, List, Union, Any
 from database import (
     get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
-    get_user_db_session, get_user_db_context, UserScopedSession, get_user_schema_name, migrate_user_schema,
+    get_user_db_session, get_user_db_context, get_guest_db_session, UserScopedSession, get_user_schema_name, migrate_user_schema,
+    drop_guest_session, cleanup_expired_guest_schemas,
     engine
 )
 from models import Movie, FavoriteDirector, SeenCountry, User
@@ -14,9 +15,9 @@ from csv_parser import parse_watchlist_csv
 from list_processor import process_all_tracked_lists, check_movie_in_tracked_lists, load_tracked_lists
 from tmdb_client import tmdb_client, extract_enriched_data_from_tmdb
 from auth import (
-    get_current_user, get_current_user_optional,
-    UserCreate, UserLogin, UserResponse, Token,
-    create_user, authenticate_user, create_access_token,
+    get_current_user, get_current_user_optional, get_current_user_or_guest, get_current_guest,
+    UserCreate, UserLogin, UserResponse, Token, GuestSession,
+    create_user, authenticate_user, create_access_token, create_guest_session,
     get_user_by_username
 )
 import logging
@@ -93,18 +94,25 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/api/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+@router.get("/api/auth/me")
+async def get_current_user_info(current_user_or_guest: Union[User, GuestSession] = Depends(get_current_user_or_guest)):
     """
-    Get current user information.
-    Requires authentication.
+    Get current user or guest information.
+    For guests, returns minimal info (id=0, username='Guest', schema_name).
     """
-    # Convert SQLAlchemy model to Pydantic model
+    if isinstance(current_user_or_guest, GuestSession):
+        return {
+            "id": 0,
+            "username": "Guest",
+            "schema_name": current_user_or_guest.schema_name,
+            "created_at": current_user_or_guest.created_at.isoformat(),
+            "guest": True,
+        }
     return UserResponse(
-        id=current_user.id,
-        username=current_user.username,
-        schema_name=current_user.schema_name,
-        created_at=current_user.created_at
+        id=current_user_or_guest.id,
+        username=current_user_or_guest.username,
+        schema_name=current_user_or_guest.schema_name,
+        created_at=current_user_or_guest.created_at
     )
 
 
@@ -116,6 +124,31 @@ async def logout():
     This endpoint exists for API consistency and potential future token blacklisting.
     """
     return {"message": "Successfully logged out"}
+
+
+@router.post("/api/auth/guest")
+async def guest_login():
+    """
+    Create a new guest session. Returns a JWT with guest claims and session info.
+    """
+    guest, access_token = create_guest_session()
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "guest": True,
+        "session_id": guest.session_id,
+        "expires_at": guest.expires_at.isoformat(),
+    }
+
+
+@router.post("/api/auth/guest/logout")
+async def guest_logout(guest: GuestSession = Depends(get_current_guest)):
+    """
+    Exit guest mode: drop the guest schema and invalidate the session.
+    Client should clear the token after calling this.
+    """
+    drop_guest_session(guest.session_id)
+    return {"message": "Guest session ended"}
 
 
 # ==========================================
@@ -137,28 +170,56 @@ def get_user_db(current_user: User = Depends(get_current_user)):
             pass
 
 
+def get_user_or_guest_db(current_user_or_guest: Union[User, GuestSession] = Depends(get_current_user_or_guest)):
+    """
+    Dependency to get a database session scoped to the current user or guest schema.
+    """
+    if isinstance(current_user_or_guest, User):
+        session_gen = get_user_db_session(current_user_or_guest.id, current_user_or_guest.schema_name)
+    else:
+        session_gen = get_guest_db_session(current_user_or_guest.session_id)
+    db = next(session_gen)
+    try:
+        yield db
+    finally:
+        try:
+            next(session_gen)
+        except StopIteration:
+            pass
+
+
 # ==========================================
 # User Settings (preferences) API
 # ==========================================
 
+def _prefs_table(schema_name: str, user_id: int) -> str:
+    """Table name for user_preferences: PostgreSQL uses schema, SQLite uses prefix."""
+    if is_postgresql:
+        return f'"{schema_name}".user_preferences'
+    if user_id >= 0:
+        return f"user_{user_id}_user_preferences"
+    return f"{schema_name}_user_preferences"
+
+
 @router.get("/api/user/settings")
-async def get_user_settings(current_user: User = Depends(get_current_user)):
+async def get_user_settings(db: UserScopedSession = Depends(get_user_or_guest_db)):
     """
     Get the current user's preferences/settings (JSON blob).
     Returns {} if no row or empty data. Returns {} on error (e.g. table not yet created).
     """
     try:
-        migrate_user_schema(current_user.schema_name)
-        schema_name = current_user.schema_name
-        user_id = current_user.id
+        migrate_user_schema(db.schema_name)
+        schema_name = db.schema_name
+        user_id = db.user_id
+        prefs_table = _prefs_table(schema_name, user_id)
         with engine.connect() as conn:
             if is_postgresql:
                 result = conn.execute(
-                    text(f'SELECT data FROM "{schema_name}".user_preferences WHERE id = 1')
+                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
                 )
             else:
                 result = conn.execute(
-                    text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
                 )
             row = result.fetchone()
             conn.commit()
@@ -179,21 +240,21 @@ async def get_user_settings(current_user: User = Depends(get_current_user)):
 @router.put("/api/user/settings")
 async def put_user_settings(
     body: Dict[str, Any],
-    current_user: User = Depends(get_current_user)
+    db: UserScopedSession = Depends(get_user_or_guest_db)
 ):
     """
     Upsert the current user's preferences/settings (JSON blob).
     Accepts partial updates; merge with existing server-side blob.
     """
     try:
-        migrate_user_schema(current_user.schema_name)
-        schema_name = current_user.schema_name
-        user_id = current_user.id
+        migrate_user_schema(db.schema_name)
+        schema_name = db.schema_name
+        user_id = db.user_id
+        prefs_table = _prefs_table(schema_name, user_id)
         with engine.connect() as conn:
             if is_postgresql:
-                # Read existing
                 result = conn.execute(
-                    text(f'SELECT data FROM "{schema_name}".user_preferences WHERE id = 1')
+                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
                 )
                 row = result.fetchone()
                 existing = row[0] if row and row[0] else None
@@ -205,9 +266,8 @@ async def put_user_settings(
                 elif not isinstance(existing, dict):
                     existing = {}
                 merged = {**existing, **body}
-                # Use JSONB bindparam so the driver serializes the dict correctly (avoids CAST/string issues)
                 insert_sql = f'''
-                    INSERT INTO "{schema_name}".user_preferences (id, data, updated_at)
+                    INSERT INTO {prefs_table} (id, data, updated_at)
                     VALUES (1, :data, CURRENT_TIMESTAMP)
                     ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
                 '''
@@ -215,7 +275,7 @@ async def put_user_settings(
                 conn.execute(stmt, {"data": merged})
             else:
                 result = conn.execute(
-                    text(f'SELECT data FROM user_{user_id}_user_preferences WHERE id = 1')
+                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
                 )
                 row = result.fetchone()
                 existing = row[0] if row and row[0] else None
@@ -230,7 +290,7 @@ async def put_user_settings(
                 json_str = json.dumps(merged)
                 conn.execute(
                     text(f'''
-                        INSERT INTO user_{user_id}_user_preferences (id, data, updated_at)
+                        INSERT INTO {prefs_table} (id, data, updated_at)
                         VALUES (1, :data, CURRENT_TIMESTAMP)
                         ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
                     '''),
@@ -849,7 +909,7 @@ async def process_csv_with_selections_stream(
 
 
 @router.post("/api/upload")
-async def process_csv(db = Depends(get_user_db)):
+async def process_csv(db = Depends(get_user_or_guest_db)):
     """
     Process the local watchlist.csv file with progress streaming.
     """
@@ -869,7 +929,7 @@ async def preview_csv_options():
     return {"message": "OK"}
 
 @router.post("/api/preview-csv")
-async def preview_csv(file: UploadFile = File(...), db = Depends(get_user_db)):
+async def preview_csv(file: UploadFile = File(...), db = Depends(get_user_or_guest_db)):
     """
     Preview CSV import - identifies movies to add and movies to remove.
     Returns preview data without making any changes to the database.
@@ -947,7 +1007,7 @@ async def preview_csv(file: UploadFile = File(...), db = Depends(get_user_db)):
 async def process_csv_with_selections(
     file: UploadFile = File(...),
     selections: str = Form(...),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Process CSV with user selections (movies to add, movies to remove).
@@ -987,7 +1047,7 @@ async def process_csv_with_selections(
 
 
 @router.post("/api/upload-csv")
-async def upload_csv(file: UploadFile = File(...), db = Depends(get_user_db)):
+async def upload_csv(file: UploadFile = File(...), db = Depends(get_user_or_guest_db)):
     """
     Upload and process a CSV file with progress streaming.
     """
@@ -1058,7 +1118,7 @@ def get_movies(
     availability_exclude: bool = Query(False, description="Exclude movies matching availability types instead of including them"),
     preferred_services: Optional[List[int]] = Query(None, description="List of preferred streaming service provider IDs for availability filtering"),
     count_only: Optional[bool] = Query(None, description="If true, return only total count (faster for random picker)"),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Get movies with optional filtering and sorting.
@@ -2093,7 +2153,7 @@ def get_movies(
     }
 
 @router.get("/api/movies/stats")
-def get_stats(db = Depends(get_user_db)):
+def get_stats(db = Depends(get_user_or_guest_db)):
     """
     Get statistics about the movie collection.
     """
@@ -2155,7 +2215,7 @@ def get_stats(db = Depends(get_user_db)):
     }
 
 @router.get("/api/movies/directors")
-def get_directors(db = Depends(get_user_db)):
+def get_directors(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique directors.
     """
@@ -2166,7 +2226,7 @@ def get_directors(db = Depends(get_user_db)):
     return [d[0] for d in directors if d[0]]
 
 @router.get("/api/movies/countries")
-def get_countries(db = Depends(get_user_db)):
+def get_countries(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique countries.
     """
@@ -2177,7 +2237,7 @@ def get_countries(db = Depends(get_user_db)):
     return [c[0] for c in countries if c[0]]
 
 @router.get("/api/movies/genres")
-def get_genres(db = Depends(get_user_db)):
+def get_genres(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique genres.
     """
@@ -2190,7 +2250,7 @@ def get_genres(db = Depends(get_user_db)):
     return sorted(list(all_genres))
 
 @router.get("/api/movies/original-languages")
-def get_original_languages(db = Depends(get_user_db)):
+def get_original_languages(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique original languages.
     """
@@ -2212,7 +2272,7 @@ def get_original_languages(db = Depends(get_user_db)):
     return sorted(list(all_languages))
 
 @router.get("/api/movies/production-companies")
-def get_production_companies(db = Depends(get_user_db)):
+def get_production_companies(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique production companies.
     """
@@ -2237,7 +2297,7 @@ def get_production_companies(db = Depends(get_user_db)):
     return sorted(list(all_companies))
 
 @router.get("/api/movies/spoken-languages")
-def get_spoken_languages(db = Depends(get_user_db)):
+def get_spoken_languages(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique spoken languages (ISO codes).
     """
@@ -2262,7 +2322,7 @@ def get_spoken_languages(db = Depends(get_user_db)):
     return sorted(list(all_languages))
 
 @router.get("/api/movies/actors")
-def get_actors(db = Depends(get_user_db)):
+def get_actors(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique actors from cast.
     """
@@ -2288,7 +2348,7 @@ def get_actors(db = Depends(get_user_db)):
     return sorted(list(all_actors))
 
 @router.get("/api/movies/writers")
-def get_writers(db = Depends(get_user_db)):
+def get_writers(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique writers from crew.
     """
@@ -2316,7 +2376,7 @@ def get_writers(db = Depends(get_user_db)):
     return sorted(list(all_writers))
 
 @router.get("/api/movies/producers")
-def get_producers(db = Depends(get_user_db)):
+def get_producers(db = Depends(get_user_or_guest_db)):
     """
     Get list of all unique producers from crew.
     """
@@ -2347,7 +2407,7 @@ def get_producers(db = Depends(get_user_db)):
 def search_tmdb_movie(
     title: str = Query(...),
     year: Optional[int] = Query(None),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Search for movies on TMDB by title and optional year.
@@ -2434,7 +2494,7 @@ def export_movies(
     search: Optional[str] = Query(None),
     favorites_only: Optional[bool] = Query(None),
     list_filters: Optional[str] = Query(None),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Export movies in various formats (CSV, JSON, Markdown).
@@ -2606,7 +2666,7 @@ def export_movies(
         )
 
 @router.get("/api/movies/{movie_id}")
-def get_movie(movie_id: int, db = Depends(get_user_db)):
+def get_movie(movie_id: int, db = Depends(get_user_or_guest_db)):
     """
     Get a single movie by ID with all TMDB data.
     """
@@ -2667,7 +2727,7 @@ def get_movie(movie_id: int, db = Depends(get_user_db)):
 @router.post("/api/movies")
 def add_movie(
     movie_data: Dict[str, Any] = Body(...),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Add a new movie to the database.
@@ -2824,7 +2884,7 @@ def add_movie(
 @router.get("/api/movies/tmdb/{tmdb_id}/details")
 def get_tmdb_movie_details(
     tmdb_id: int,
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Get full movie details from TMDB by TMDB ID.
@@ -2886,7 +2946,7 @@ def get_tmdb_movie_details(
 def set_movie_favorite(
     movie_id: int,
     is_favorite: bool = Body(..., embed=True),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Set favorite flag for a movie.
@@ -2908,7 +2968,7 @@ def set_movie_favorite(
 def set_movie_notes(
     movie_id: int,
     notes: str = Body(..., embed=True),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Set notes for a movie.
@@ -2934,7 +2994,7 @@ def set_movie_notes(
 def set_movie_seen_before(
     movie_id: int,
     seen_before: bool = Body(..., embed=True),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Set seen_before flag for a movie.
@@ -2955,7 +3015,7 @@ def set_movie_seen_before(
 @router.delete("/api/movies/{movie_id}")
 def delete_movie(
     movie_id: int,
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Delete a movie from the database.
@@ -2979,7 +3039,7 @@ def delete_movie(
         raise HTTPException(status_code=500, detail=f"Error deleting movie: {str(e)}")
 
 @router.get("/api/movies/{movie_id}/collection")
-def get_collection_movies(movie_id: int, db = Depends(get_user_db)):
+def get_collection_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
     """
     Get all movies in the same collection as the specified movie.
     Returns all movies from TMDB collection, with flags indicating which ones are in the database.
@@ -3109,7 +3169,7 @@ def get_collection_movies(movie_id: int, db = Depends(get_user_db)):
     }
 
 @router.get("/api/movies/{movie_id}/similar")
-def get_similar_movies(movie_id: int, db = Depends(get_user_db)):
+def get_similar_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
     """
     Get similar movies for the specified movie.
     Only returns movies that are already in the watchlist database.
@@ -3188,7 +3248,7 @@ def get_similar_movies(movie_id: int, db = Depends(get_user_db)):
         }
 
 @router.get("/api/movies/director/{director_name}")
-def get_director_movies(director_name: str, db = Depends(get_user_db)):
+def get_director_movies(director_name: str, db = Depends(get_user_or_guest_db)):
     """
     Get all movies by a specific director.
     Returns movies from both the database and TMDB, with flags indicating which ones are in the database.
@@ -3314,7 +3374,7 @@ def get_director_movies(director_name: str, db = Depends(get_user_db)):
     }
 
 @router.get("/api/directors/favorites")
-def get_favorite_directors(db = Depends(get_user_db)):
+def get_favorite_directors(db = Depends(get_user_or_guest_db)):
     """
     Get list of all favorited directors.
     """
@@ -3326,7 +3386,7 @@ def get_favorite_directors(db = Depends(get_user_db)):
 @router.post("/api/directors/favorites")
 def add_favorite_director(
     director_name: str = Body(..., embed=True),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Add a director to favorites.
@@ -3355,7 +3415,7 @@ def add_favorite_director(
 @router.delete("/api/directors/favorites/{director_name}")
 def remove_favorite_director(
     director_name: str,
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Remove a director from favorites.
@@ -3376,7 +3436,7 @@ def remove_favorite_director(
     }
 
 @router.get("/api/countries/seen")
-def get_seen_countries(db = Depends(get_user_db)):
+def get_seen_countries(db = Depends(get_user_or_guest_db)):
     """
     Get list of all seen countries.
     """
@@ -3388,7 +3448,7 @@ def get_seen_countries(db = Depends(get_user_db)):
 @router.post("/api/countries/seen")
 def add_seen_country(
     country_name: str = Body(..., embed=True),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Add a country to the seen list.
@@ -3417,7 +3477,7 @@ def add_seen_country(
 @router.delete("/api/countries/seen/{country_name}")
 def remove_seen_country(
     country_name: str,
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Remove a country from the seen list.
@@ -3438,7 +3498,7 @@ def remove_seen_country(
     }
 
 @router.get("/api/movies/{movie_id}/streaming")
-def get_movie_streaming(movie_id: int, country_code: str = Query("US", description="ISO 3166-1 country code"), db = Depends(get_user_db)):
+def get_movie_streaming(movie_id: int, country_code: str = Query("US", description="ISO 3166-1 country code"), db = Depends(get_user_or_guest_db)):
     """
     Get streaming availability for a movie in a specific country.
     Extracts watch providers from cached tmdb_data.
@@ -3572,7 +3632,7 @@ def get_streaming_services():
         raise HTTPException(status_code=500, detail=f"Error fetching streaming services: {str(e)}")
 
 @router.post("/api/movies/recache")
-def recache_movies(db = Depends(get_user_db)):
+def recache_movies(db = Depends(get_user_or_guest_db)):
     """
     Recache all movies by fetching fresh TMDB data for each movie.
     """
@@ -3620,7 +3680,7 @@ def recache_movies(db = Depends(get_user_db)):
 
 
 @router.post("/api/movies/clear-cache")
-def clear_cache(db = Depends(get_user_db)):
+def clear_cache(db = Depends(get_user_or_guest_db)):
     """
     Clear all movies from the database (clears all movie records and cache).
     This ensures that when processing CSV again, movies will be treated as new and fresh data will be fetched.
@@ -3648,7 +3708,7 @@ def clear_cache(db = Depends(get_user_db)):
         raise HTTPException(status_code=500, detail=f"Error deleting movies: {str(e)}")
 
 @router.post("/api/movies/process-tracked-lists")
-def process_tracked_lists(db = Depends(get_user_db)):
+def process_tracked_lists(db = Depends(get_user_or_guest_db)):
     """
     Process all CSV files in the tracked-lists directory and update movie list memberships.
     """
@@ -3681,7 +3741,7 @@ def export_profile(
     include_tmdb_data: bool = Body(True, description="Include full TMDB data in export"),
     preferences: Optional[Dict[str, Any]] = Body(None, description="User preferences to include in export"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    db = Depends(get_user_db)
+    db = Depends(get_user_or_guest_db)
 ):
     """
     Export user profile (all movies, favorites, preferences) to a ZIP file.
@@ -3829,7 +3889,7 @@ async def import_profile_options():
 @router.post("/api/import-profile")
 async def import_profile(
     file: UploadFile = File(...),
-    db = Depends(get_user_db),
+    db = Depends(get_user_or_guest_db),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """

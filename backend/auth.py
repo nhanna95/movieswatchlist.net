@@ -3,8 +3,11 @@ Authentication module for user management.
 Handles password hashing, JWT token creation/validation, and user verification.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
+from uuid import uuid4
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -14,8 +17,8 @@ import hashlib
 import base64
 import bcrypt
 
-from config import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS
-from database import get_db
+from config import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS, GUEST_EXPIRATION_HOURS
+from database import get_db, get_guest_schema_name, create_guest_schema, register_guest_session, get_registered_guest_session
 
 import logging
 
@@ -44,6 +47,16 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     username: Optional[str] = None
+    guest: Optional[bool] = None
+    session_id: Optional[str] = None
+
+
+class GuestSession(BaseModel):
+    """Represents a guest session (no User record)."""
+    session_id: str
+    schema_name: str
+    created_at: datetime
+    expires_at: datetime
 
 
 class UserResponse(BaseModel):
@@ -142,22 +155,21 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def decode_token(token: str) -> Optional[TokenData]:
     """
-    Decode and validate a JWT token.
-    
-    Args:
-        token: JWT token string
-        
-    Returns:
-        TokenData if valid, None otherwise
+    Decode and validate a JWT token (user or guest).
+    For user tokens: user_id and username present.
+    For guest tokens: guest=True and session_id present.
     """
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id: int = payload.get("user_id")
-        username: str = payload.get("username")
-        
+        if payload.get("guest") is True:
+            session_id = payload.get("session_id")
+            if not session_id:
+                return None
+            return TokenData(guest=True, session_id=session_id, user_id=None, username=None)
+        user_id = payload.get("user_id")
+        username = payload.get("username")
         if user_id is None:
             return None
-            
         return TokenData(user_id=user_id, username=username)
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")
@@ -310,4 +322,98 @@ def authenticate_user(db: Session, username: str, password: str):
     if not verify_password(password, user.hashed_password):
         return None
     
+    return user
+
+
+def create_guest_session() -> tuple["GuestSession", str]:
+    """
+    Create a new guest session: schema/tables and JWT with guest claims.
+    Returns (GuestSession, access_token).
+    """
+    session_id = str(uuid4())
+    schema_name = get_guest_schema_name(session_id)
+    create_guest_schema(session_id)
+    created_at = datetime.utcnow()
+    expires_at = created_at + timedelta(hours=GUEST_EXPIRATION_HOURS)
+    register_guest_session(session_id, expires_at)
+    guest = GuestSession(
+        session_id=session_id,
+        schema_name=schema_name,
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+    access_token = create_access_token(
+        data={"guest": True, "session_id": session_id, "user_id": None},
+        expires_delta=timedelta(hours=GUEST_EXPIRATION_HOURS),
+    )
+    logger.info(f"Created guest session {session_id}")
+    return guest, access_token
+
+
+async def get_current_guest(
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> GuestSession:
+    """
+    Dependency to get the current guest session. Raises 401 if not a valid guest token.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if token is None:
+        raise credentials_exception
+    token_data = decode_token(token)
+    if token_data is None or not token_data.guest or not token_data.session_id:
+        raise credentials_exception
+    meta = get_registered_guest_session(token_data.session_id)
+    if not meta:
+        raise credentials_exception
+    return GuestSession(
+        session_id=token_data.session_id,
+        schema_name=meta["schema_name"],
+        created_at=meta["created_at"],
+        expires_at=meta["expires_at"],
+    )
+
+
+async def get_current_user_or_guest(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> Union["User", "GuestSession"]:
+    """
+    Dependency that returns either the current User or the current GuestSession.
+    Tries user first, then guest.
+    """
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token_data = decode_token(token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if token_data.guest and token_data.session_id:
+        meta = get_registered_guest_session(token_data.session_id)
+        if meta:
+            return GuestSession(
+                session_id=token_data.session_id,
+                schema_name=meta["schema_name"],
+                created_at=meta["created_at"],
+                expires_at=meta["expires_at"],
+            )
+    # User path
+    from models import User
+    user = db.query(User).filter(User.id == token_data.user_id).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user

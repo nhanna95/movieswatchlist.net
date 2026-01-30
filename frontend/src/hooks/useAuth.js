@@ -7,6 +7,9 @@ import {
   getStoredUser,
   verifyToken,
   fetchCurrentUser,
+  isGuestMode as authIsGuestMode,
+  createGuestSession as authCreateGuestSession,
+  clearGuestSession as authClearGuestSession,
 } from '../services/auth';
 import { clearAllUserData } from '../constants/userStorageKeys';
 
@@ -18,6 +21,7 @@ const AuthContext = createContext(null);
  */
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [guestMode, setGuestMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -26,23 +30,30 @@ export const AuthProvider = ({ children }) => {
     const checkAuth = async () => {
       try {
         if (isAuthenticated()) {
-          // Try to get stored user first
+          const isGuest = authIsGuestMode();
+          if (isGuest) {
+            setGuestMode(true);
+          }
           const storedUser = getStoredUser();
           if (storedUser) {
             setUser(storedUser);
           }
-          // Verify token is still valid
           const isValid = await verifyToken();
           if (isValid) {
             const currentUser = await fetchCurrentUser();
             setUser(currentUser);
+            if (currentUser?.guest) {
+              setGuestMode(true);
+            }
           } else {
             setUser(null);
+            setGuestMode(false);
           }
         }
       } catch (err) {
         console.error('Error checking auth:', err);
         setUser(null);
+        setGuestMode(false);
       } finally {
         setLoading(false);
       }
@@ -50,9 +61,9 @@ export const AuthProvider = ({ children }) => {
 
     checkAuth();
 
-    // Listen for unauthorized events
     const handleUnauthorized = () => {
       setUser(null);
+      setGuestMode(false);
     };
     window.addEventListener('auth:unauthorized', handleUnauthorized);
 
@@ -109,10 +120,54 @@ export const AuthProvider = ({ children }) => {
     try {
       await authLogout();
       setUser(null);
+      setGuestMode(false);
       setError(null);
       clearAllUserData();
     } catch (err) {
       console.error('Logout error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /**
+   * Start guest mode (no account). Creates guest session and sets user from API.
+   */
+  const startGuestMode = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await authCreateGuestSession();
+      const currentUser = await fetchCurrentUser();
+      setUser(currentUser);
+      setGuestMode(true);
+      return { success: true };
+    } catch (err) {
+      const errorMessage = err.message || 'Could not start guest session';
+      setError(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /**
+   * Exit guest mode. Calls guest logout endpoint and clears token/state.
+   */
+  const exitGuestMode = useCallback(async () => {
+    setLoading(true);
+    try {
+      await authLogout();
+      setUser(null);
+      setGuestMode(false);
+      setError(null);
+      clearAllUserData();
+    } catch (err) {
+      console.error('Exit guest error:', err);
+      authClearGuestSession();
+      setUser(null);
+      setGuestMode(false);
+      clearAllUserData();
     } finally {
       setLoading(false);
     }
@@ -127,12 +182,15 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    guestMode,
     loading,
     error,
-    isAuthenticated: !!user,
+    isAuthenticated: !!user || guestMode,
     login,
     register,
     logout,
+    startGuestMode,
+    exitGuestMode,
     clearError,
   };
 

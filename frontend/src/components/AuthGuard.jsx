@@ -9,7 +9,7 @@ import './AuthGuard.css';
  * Always renders children (app shell). When not authenticated, shows Login or Register as a modal overlay.
  */
 const AuthGuard = ({ children }) => {
-  const { isAuthenticated, loading, error, login, register } = useAuth();
+  const { isAuthenticated, loading, error, login, register, startGuestMode } = useAuth();
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
 
   return (
@@ -26,6 +26,7 @@ const AuthGuard = ({ children }) => {
           asModal
           onLogin={login}
           onSwitchToRegister={() => setAuthMode('register')}
+          onStartGuest={startGuestMode}
           error={error}
           loading={loading}
         />

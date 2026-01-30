@@ -5,6 +5,8 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 // Token storage key
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+const GUEST_MODE_KEY = 'guest_mode';
+const GUEST_SESSION_ID_KEY = 'guest_session_id';
 
 /**
  * Get the stored authentication token
@@ -21,11 +23,13 @@ export const setToken = (token) => {
 };
 
 /**
- * Remove the authentication token
+ * Remove the authentication token and guest state
  */
 export const removeToken = () => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(GUEST_MODE_KEY);
+  localStorage.removeItem(GUEST_SESSION_ID_KEY);
 };
 
 /**
@@ -51,10 +55,56 @@ export const setStoredUser = (user) => {
 };
 
 /**
- * Check if the user is authenticated
+ * Check if the user is authenticated (has a token)
  */
 export const isAuthenticated = () => {
   return !!getToken();
+};
+
+/**
+ * Get the stored guest session ID
+ */
+export const getGuestSessionId = () => {
+  return localStorage.getItem(GUEST_SESSION_ID_KEY);
+};
+
+/**
+ * Set the guest session ID and guest mode flag
+ */
+export const setGuestSessionId = (sessionId) => {
+  if (sessionId) {
+    localStorage.setItem(GUEST_MODE_KEY, 'true');
+    localStorage.setItem(GUEST_SESSION_ID_KEY, sessionId);
+  } else {
+    localStorage.removeItem(GUEST_MODE_KEY);
+    localStorage.removeItem(GUEST_SESSION_ID_KEY);
+  }
+};
+
+/**
+ * Check if the current session is guest mode
+ */
+export const isGuestMode = () => {
+  return localStorage.getItem(GUEST_MODE_KEY) === 'true';
+};
+
+/**
+ * Create a guest session (no account). Stores token and guest flag.
+ * @returns {Promise<{access_token: string, token_type: string, guest: boolean, session_id: string}>}
+ */
+export const createGuestSession = async () => {
+  const response = await axios.post(`${API_BASE_URL}/api/auth/guest`);
+  const { access_token, session_id } = response.data;
+  setToken(access_token);
+  setGuestSessionId(session_id);
+  return response.data;
+};
+
+/**
+ * Clear guest session and token (exit guest mode)
+ */
+export const clearGuestSession = () => {
+  removeToken();
 };
 
 /**
@@ -140,14 +190,18 @@ export const login = async (username, password) => {
 };
 
 /**
- * Logout the current user
+ * Logout the current user. If in guest mode, optionally call guest logout endpoint first.
  */
 export const logout = async () => {
   try {
-    const authAxios = createAuthAxios();
-    await authAxios.post('/api/auth/logout');
+    if (isGuestMode()) {
+      const authAxios = createAuthAxios();
+      await authAxios.post('/api/auth/guest/logout');
+    } else {
+      const authAxios = createAuthAxios();
+      await authAxios.post('/api/auth/logout');
+    }
   } catch (error) {
-    // Logout should still proceed even if the API call fails
     console.warn('Logout API call failed:', error);
   } finally {
     removeToken();
@@ -215,6 +269,11 @@ export default {
   getStoredUser,
   setStoredUser,
   isAuthenticated,
+  getGuestSessionId,
+  setGuestSessionId,
+  isGuestMode,
+  createGuestSession,
+  clearGuestSession,
   register,
   login,
   logout,

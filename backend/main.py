@@ -1,21 +1,42 @@
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import init_db
+from database import init_db, cleanup_expired_guest_schemas
 from routes import router
 import logging
 import os
-from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+async def _periodic_guest_cleanup():
+    """Run guest schema cleanup every hour."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            n = cleanup_expired_guest_schemas()
+            if n:
+                logger.info(f"Periodic guest cleanup: removed {n} expired schema(s)")
+        except Exception as e:
+            logger.warning(f"Periodic guest cleanup failed: {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
     logger.info("Database initialized")
+    cleanup_expired_guest_schemas()
+    task = asyncio.create_task(_periodic_guest_cleanup())
     yield
-    # Shutdown (if needed in the future)
+    # Shutdown
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 app = FastAPI(
     title="Letterboxd Watchlist API",
