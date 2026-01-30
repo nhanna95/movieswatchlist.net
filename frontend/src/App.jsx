@@ -2688,15 +2688,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
     loadMovies(true);
-  }, [sorts, filters, search, loadMovies]);
+  }, [user, sorts, filters, search, loadMovies]);
 
   useEffect(() => {
+    if (!user) return;
     loadStats();
-  }, [loadStats]);
+  }, [user, loadStats]);
 
-  // Load favorite directors on mount
+  // Load favorite directors when user is set
   useEffect(() => {
+    if (!user) return;
     const fetchFavoriteDirectors = async () => {
       try {
         const data = await getFavoriteDirectors();
@@ -2706,7 +2709,7 @@ function App() {
       }
     };
     fetchFavoriteDirectors();
-  }, []);
+  }, [user]);
 
   // Infinite scroll detection and scroll-to-top button visibility
   useEffect(() => {

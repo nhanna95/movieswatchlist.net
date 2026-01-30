@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import SecurityWarningModal from './SecurityWarningModal';
+import './Login.css';
 import './Register.css';
 
 const SECURITY_WARNING_ACCEPTED_KEY = 'security_warning_accepted';
@@ -13,7 +14,7 @@ const getInitialSecurityWarningState = () => {
   }
 };
 
-const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
+const Register = ({ asModal, onRegister, onSwitchToLogin, error, loading }) => {
   const [showSecurityWarning, setShowSecurityWarning] = useState(
     () => !getInitialSecurityWarningState()
   );
@@ -70,21 +71,13 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
     }
   };
 
-  // Show security warning first
-  if (showSecurityWarning && !warningAccepted) {
-    return (
-      <SecurityWarningModal
-        onAccept={handleSecurityWarningAccept}
-        onCancel={handleSecurityWarningCancel}
-      />
-    );
-  }
-
   const displayError = localError || error;
+  const overlayClass = asModal ? 'auth-overlay auth-overlay-modal' : 'auth-overlay';
 
   return createPortal(
-    <div className="auth-overlay">
-      <div className="auth-container register-container">
+    <>
+      <div className={overlayClass}>
+        <div className="auth-container register-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>
           <p>Create your account</p>
@@ -159,8 +152,15 @@ const Register = ({ onRegister, onSwitchToLogin, error, loading }) => {
             </button>
           </p>
         </div>
+        </div>
       </div>
-    </div>,
+      {showSecurityWarning && !warningAccepted && (
+        <SecurityWarningModal
+          onAccept={handleSecurityWarningAccept}
+          onCancel={handleSecurityWarningCancel}
+        />
+      )}
+    </>,
     document.body
   );
 };

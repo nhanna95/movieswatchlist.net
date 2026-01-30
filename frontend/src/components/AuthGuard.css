@@ -37,3 +37,8 @@
   color: #888;
   margin: 0;
 }
+
+/* Over app shell: dimmed overlay so blank database is visible */
+.auth-loading-overlay {
+  background: rgba(0, 0, 0, 0.6);
+}

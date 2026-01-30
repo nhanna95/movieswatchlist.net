@@ -11,6 +11,11 @@
   z-index: 10000;
 }
 
+/* Modal variant: dimmed overlay so app shell is visible behind */
+.auth-overlay-modal {
+  background: rgba(0, 0, 0, 0.6);
+}
+
 .auth-container {
   background: #1e1e1e;
   border-radius: 12px;

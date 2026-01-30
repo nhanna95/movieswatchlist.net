@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import './Login.css';
 
-const Login = ({ onLogin, onSwitchToRegister, error, loading }) => {
+const Login = ({ asModal, onLogin, onSwitchToRegister, error, loading }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -28,8 +28,10 @@ const Login = ({ onLogin, onSwitchToRegister, error, loading }) => {
 
   const displayError = localError || error;
 
+  const overlayClass = asModal ? 'auth-overlay auth-overlay-modal' : 'auth-overlay';
+
   return createPortal(
-    <div className="auth-overlay">
+    <div className={overlayClass}>
       <div className="auth-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>
