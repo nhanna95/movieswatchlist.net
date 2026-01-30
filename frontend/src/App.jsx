@@ -675,6 +675,7 @@ const ImportExportModal = ({
   const [exportColumns, setExportColumns] = useState('title,year,director,runtime,genres');
   const [exportIncludeNotes, setExportIncludeNotes] = useState(true);
   const [exportMoviesLoading, setExportMoviesLoading] = useState(false);
+  const [refreshingTrackedLists, setRefreshingTrackedLists] = useState(false);
   const [importProcessing, setImportProcessing] = useState(false);
   const [importProgress, setImportProgress] = useState({
     current: 0,
@@ -1498,8 +1499,20 @@ const ImportExportModal = ({
               <p className="cache-description">
                 Re-apply tracked lists (e.g. IMDb Top 250, Letterboxd Top 250) to match your movies. Run this after adding or importing movies.
               </p>
-              <button onClick={onProcessTrackedLists} className="clear-cache-button" type="button">
-                Refresh Tracked Lists
+              <button
+                onClick={async () => {
+                  setRefreshingTrackedLists(true);
+                  try {
+                    await onProcessTrackedLists();
+                  } finally {
+                    setRefreshingTrackedLists(false);
+                  }
+                }}
+                className="clear-cache-button"
+                type="button"
+                disabled={refreshingTrackedLists}
+              >
+                {refreshingTrackedLists ? 'Refreshing...' : 'Refresh Tracked Lists'}
               </button>
             </div>
           )}
@@ -1508,7 +1521,7 @@ const ImportExportModal = ({
             <p className="cache-description">
               Clear the movie cache and reset all settings to default values
             </p>
-            <button onClick={onClearCache} className="clear-cache-button">
+            <button onClick={onClearCache} className="clear-cache-button" type="button">
               Reset Database
             </button>
           </div>
@@ -2103,6 +2116,7 @@ function App() {
   const sortsRef = useRef(sorts);
   const filtersRef = useRef(filters);
   const searchRef = useRef(search);
+  const loadMoviesRequestIdRef = useRef(0);
   const isUpdatingFavoriteRef = useRef(false);
   const skipNextSaveRef = useRef(false);
   const [settingsSaveTrigger, setSettingsSaveTrigger] = useState(0);
@@ -2180,16 +2194,18 @@ function App() {
       }
       if (prefs.currentFilters) {
         const newFilters = JSON.parse(JSON.stringify(prefs.currentFilters));
-        setFilters(newFilters);
         filtersRef.current = newFilters;
+        setFilters(newFilters);
         localStorage.setItem('currentFilters', JSON.stringify(newFilters));
       }
       if (prefs.defaultFilters != null) {
         localStorage.setItem('defaultFilters', JSON.stringify(prefs.defaultFilters));
       }
       if (prefs.currentSearch != null) {
+        const searchVal = prefs.currentSearch ?? '';
+        searchRef.current = searchVal;
+        setSearch(searchVal);
         localStorage.setItem('currentSearch', prefs.currentSearch);
-        setSearch(prefs.currentSearch);
       }
       if (prefs.filterPresets) {
         localStorage.setItem('filterPresets', JSON.stringify(prefs.filterPresets));
@@ -2345,6 +2361,7 @@ function App() {
         setLoadingMore(true);
       }
 
+      const requestId = ++loadMoviesRequestIdRef.current;
       try {
         const currentPagination = paginationRef.current;
         const currentSkip = reset ? 0 : currentPagination.skip;
@@ -2444,6 +2461,9 @@ function App() {
         params.show_favorites_first = true;
 
         const data = await getMovies(params);
+        if (requestId !== loadMoviesRequestIdRef.current) {
+          return;
+        }
         const newMovies = data.movies || [];
 
         if (reset) {
@@ -2466,7 +2486,7 @@ function App() {
         paginationRef.current = updatedPagination;
       } catch (error) {
         console.error('Error loading movies:', error);
-        if (reset) {
+        if (requestId === loadMoviesRequestIdRef.current && reset) {
           setMovies([]);
         }
       } finally {
@@ -2939,9 +2959,15 @@ function App() {
   };
 
   const handleFiltersChange = (newFilters) => {
+    filtersRef.current = newFilters;
     setFilters(newFilters);
     // Don't clear previousFilters here - only clear when reverting or when a new label is clicked
   };
+
+  const handleSearchChange = useCallback((value) => {
+    searchRef.current = value ?? '';
+    setSearch(value ?? '');
+  }, []);
 
   const handleFilterByTrackedList = (columnName) => {
     // Save current filters so user can revert
@@ -3430,7 +3456,9 @@ function App() {
         setShowFavoritesFirst(true);
         setDefaultShowFavoritesFirst(true);
         setColumnsExpanded(defaultColumnsExpanded);
+        filtersRef.current = [];
         setFilters([]);
+        searchRef.current = '';
         setSearch('');
         setPagination({
           skip: 0,
@@ -4231,7 +4259,7 @@ function App() {
                   type="text"
                   placeholder="Search movies... (Press '/' to focus)"
                   value={search || ''}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -4251,7 +4279,7 @@ function App() {
                   <button
                     className="search-clear-button"
                     onClick={() => {
-                      setSearch('');
+                      handleSearchChange('');
                       searchInputRef.current?.focus();
                     }}
                     title="Clear search"
@@ -4329,7 +4357,7 @@ function App() {
                       key={index}
                       className="search-history-item"
                       onClick={() => {
-                        setSearch(term);
+                        handleSearchChange(term);
                         setSearchHistoryOpen(false);
                       }}
                       type="button"
@@ -4426,7 +4454,7 @@ function App() {
             onFiltersChange={handleFiltersChange}
             stats={stats}
             search={search}
-            onSearchChange={setSearch}
+            onSearchChange={handleSearchChange}
             defaultSorts={defaultSorts}
             onSetDefaultSorts={handleSetDefaultSorts}
             showFavoritesFirst={showFavoritesFirst}
