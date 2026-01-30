@@ -24,6 +24,7 @@ const HelpModal = ({ onClose }) => {
     { key: 'Enter', description: 'Open selected movie modal' },
     { key: 'F', description: 'Toggle favorite on selected movie' },
     { key: '↑ ↓', description: 'Navigate between movies' },
+    { key: '← →', description: 'Previous/next movie (in movie modal)' },
   ];
 
   // GitHub repository URL - update this with your actual repository
@@ -72,8 +73,8 @@ const HelpModal = ({ onClose }) => {
                 <h4 className="help-feature-title">Profile Export & Import</h4>
                 <p className="help-feature-description">
                   Export your complete profile including all movies, favorites, settings, and
-                  preferences to a ZIP file. Import it later to restore everything on a new device
-                  or after clearing data. <strong>Important: Since an account system is still in the works, you must export and import your profile between uses to keep your preferences and data.</strong>
+                  preferences to a ZIP file. Import it later to restore on a new device or as a
+                  backup. When logged in, your data is stored with your account.
                 </p>
               </div>
               <div className="help-feature">

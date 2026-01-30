@@ -24,6 +24,7 @@ const KeyboardShortcutsHelp = ({ onClose }) => {
     { key: 'F', description: 'Toggle favorite on selected movie' },
     { key: '?', description: 'Show keyboard shortcuts help' },
     { key: '↑ ↓', description: 'Navigate between movies' },
+    { key: '← →', description: 'Previous/next movie (in movie modal)' },
   ];
 
   return (
