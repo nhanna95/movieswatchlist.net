@@ -3159,10 +3159,14 @@ function App({ setShowAuthModal }) {
     setImportExportModalOpen(false);
   };
 
-  const handleAddMovieSuccess = () => {
+  const handleAddMovieSuccess = (options = {}) => {
     loadMovies();
     loadStats();
-    addToast('Movie added successfully!', 'success');
+    if (options.uncertain) {
+      addToast('Please check if the movie was added. Refreshing list...', 'info');
+    } else {
+      addToast('Movie added successfully!', 'success');
+    }
   };
 
   const handleExportProfile = async (includeTmdbData) => {

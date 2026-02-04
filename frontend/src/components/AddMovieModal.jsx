@@ -426,6 +426,16 @@ const AddMovieModal = ({
       onClose();
     } catch (error) {
       console.error('Error adding movie:', error);
+
+      // Network error with no response - backend may have succeeded (e.g. CORS blocked response).
+      // Refresh the list so user can verify; the movie may have been added.
+      const isNetworkError = !error.response && (error.message === 'Network Error' || error.code === 'ERR_NETWORK');
+      if (isNetworkError && onAddSuccess) {
+        onAddSuccess({ uncertain: true });
+        onClose();
+        return;
+      }
+
       let errorMessage = 'Error adding movie';
 
       if (error.response?.data?.detail) {

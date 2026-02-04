@@ -2844,50 +2844,68 @@ def add_movie(
     
     logger.info(f"Successfully added movie: {title} ({year})")
     
-    # Get tracked list memberships for response
-    tracked_list_columns = get_tracked_list_names()
-    list_memberships = {}
-    if tracked_list_columns:
-        result = db.execute(
-            text(f"SELECT {', '.join([col for col in tracked_list_columns])} FROM movies WHERE id = :movie_id"),
-            {"movie_id": movie.id}
-        ).fetchone()
-        if result:
-            for idx, column_name in enumerate(tracked_list_columns):
-                value = result[idx] if result[idx] is not None else 0
-                list_memberships[column_name] = bool(value)
-        else:
-            for column_name in tracked_list_columns:
-                list_memberships[column_name] = False
-    
-    # Format created_at as ISO string for frontend
-    date_added = None
-    if movie.created_at:
-        if isinstance(movie.created_at, str):
-            date_added = movie.created_at
-        else:
-            date_added = movie.created_at.isoformat()
-    
-    # Build response with all available data
-    movie_data = {
-        "id": movie.id,
-        "title": movie.title,
-        "year": movie.year,
-        "letterboxd_uri": movie.letterboxd_uri,
-        "director": movie.director,
-        "country": movie.country,
-        "runtime": movie.runtime,
-        "genres": movie.genres or [],
-        "tmdb_id": movie.tmdb_id,
-        "tmdb_data": movie.tmdb_data,
-        "is_favorite": bool(movie.is_favorite),
-        "seen_before": bool(movie.seen_before) if hasattr(movie, 'seen_before') else False,
-        "notes": movie.notes or "",
-        "date_added": date_added,
-        **list_memberships
-    }
-    
-    return movie_data
+    # Build response - wrap in try/except to ensure we always return success when movie was added.
+    # Failures here (e.g. tracked list column missing, serialization) would otherwise cause
+    # the client to see a network/500 error even though the movie was successfully saved.
+    try:
+        tracked_list_columns = get_tracked_list_names()
+        list_memberships = {}
+        if tracked_list_columns:
+            result = db.execute(
+                text(f"SELECT {', '.join([col for col in tracked_list_columns])} FROM movies WHERE id = :movie_id"),
+                {"movie_id": movie.id}
+            ).fetchone()
+            if result:
+                for idx, column_name in enumerate(tracked_list_columns):
+                    value = result[idx] if result[idx] is not None else 0
+                    list_memberships[column_name] = bool(value)
+            else:
+                for column_name in tracked_list_columns:
+                    list_memberships[column_name] = False
+        
+        date_added = None
+        if movie.created_at:
+            if isinstance(movie.created_at, str):
+                date_added = movie.created_at
+            else:
+                date_added = movie.created_at.isoformat()
+        
+        movie_data = {
+            "id": movie.id,
+            "title": movie.title,
+            "year": movie.year,
+            "letterboxd_uri": movie.letterboxd_uri,
+            "director": movie.director,
+            "country": movie.country,
+            "runtime": movie.runtime,
+            "genres": movie.genres or [],
+            "tmdb_id": movie.tmdb_id,
+            "tmdb_data": movie.tmdb_data,
+            "is_favorite": bool(movie.is_favorite),
+            "seen_before": bool(movie.seen_before) if hasattr(movie, 'seen_before') else False,
+            "notes": movie.notes or "",
+            "date_added": date_added,
+            **list_memberships
+        }
+        return movie_data
+    except Exception as e:
+        logger.warning(f"Error building add_movie response (movie was saved): {e}")
+        # Return minimal success response - frontend will refresh list via onAddSuccess
+        return {
+            "id": movie.id,
+            "title": movie.title,
+            "year": movie.year,
+            "letterboxd_uri": movie.letterboxd_uri,
+            "director": movie.director,
+            "country": movie.country,
+            "runtime": movie.runtime,
+            "genres": movie.genres or [],
+            "tmdb_id": movie.tmdb_id,
+            "is_favorite": bool(movie.is_favorite),
+            "seen_before": bool(movie.seen_before) if hasattr(movie, 'seen_before') else False,
+            "notes": movie.notes or "",
+            "date_added": movie.created_at.isoformat() if movie.created_at and hasattr(movie.created_at, 'isoformat') else None,
+        }
 
 @router.get("/api/movies/tmdb/{tmdb_id}/details")
 def get_tmdb_movie_details(
