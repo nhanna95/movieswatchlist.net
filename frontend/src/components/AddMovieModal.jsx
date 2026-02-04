@@ -509,7 +509,7 @@ const AddMovieModal = ({
                   }
                 }}
                 onKeyDown={handleAutocompleteKeyDown}
-                placeholder="Type to search movies... (e.g., The Matrix)"
+                placeholder="Type to search movies... (e.g., Perfect Days)"
                 disabled={loading || showConfirmation}
                 className="autocomplete-input"
               />
