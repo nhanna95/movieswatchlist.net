@@ -30,8 +30,12 @@ const Login = ({ asModal, onLogin, onSwitchToRegister, onStartGuest, onClose, er
 
   const overlayClass = asModal ? 'auth-overlay auth-overlay-modal' : 'auth-overlay';
 
+  const handleOverlayClick = (e) => {
+    if (onClose && e.target === e.currentTarget) onClose();
+  };
+
   return createPortal(
-    <div className={overlayClass} onClick={onClose && (e) => e.target === e.currentTarget && onClose()}>
+    <div className={overlayClass} onClick={onClose ? handleOverlayClick : undefined}>
       <div className="auth-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>

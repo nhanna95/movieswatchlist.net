@@ -67,7 +67,7 @@ const Register = ({ asModal, onRegister, onSwitchToLogin, onClose, error, loadin
 
   return createPortal(
     <>
-      <div className={overlayClass} onClick={onClose && (e) => e.target === e.currentTarget && onClose()}>
+      <div className={overlayClass} onClick={onClose ? (e) => { if (e.target === e.currentTarget) onClose(); } : undefined}>
         <div className="auth-container register-container">
         <div className="auth-header">
           <h1>Movies Watchlist</h1>
