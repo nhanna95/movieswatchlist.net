@@ -70,14 +70,6 @@ const HelpModal = ({ onClose }) => {
                 </p>
               </div>
               <div className="help-feature">
-                <h4 className="help-feature-title">Profile Export & Import</h4>
-                <p className="help-feature-description">
-                  Export your complete profile including all movies, favorites, settings, and
-                  preferences to a ZIP file. Import it later to restore on a new device or as a
-                  backup. When logged in, your data is stored with your account.
-                </p>
-              </div>
-              <div className="help-feature">
                 <h4 className="help-feature-title">Mark Favorites & Track Watched</h4>
                 <p className="help-feature-description">
                   Mark movies as favorites and track which movies you've already seen. Use these

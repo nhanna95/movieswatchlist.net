@@ -59,12 +59,7 @@ A comprehensive movie watchlist management application that allows you to import
 - **Keyboard Shortcuts**: Quick access to common actions
 - **Responsive Design**: Works on desktop, tablet, and mobile devices
 - **Streaming Integration**: Check where movies are available to stream in your region
-- **Profile Export/Import**: Backup and restore your entire profile (favorites, seen countries, favorite directors, etc.)
-
-### Multi-User Support
-- **User Authentication**: JWT-based authentication with secure login/registration
-- **Data Isolation**: Each user has their own isolated database schema
-- **Per-User Data**: Movies, favorites, and settings are completely separate per user
+- **Export Movies**: Export your filtered movie list as CSV, JSON, Markdown, or Letterboxd format
 
 ## Tech Stack
 
@@ -130,15 +125,9 @@ Create a `.env` file in the `backend` directory:
 ```env
 TMDB_API_KEY=your_tmdb_api_key_here
 DATABASE_URL=sqlite:///./watchlist.db
-
-# JWT Authentication (required for multi-user support)
-# Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET_KEY=your_secure_secret_key_here
-JWT_ALGORITHM=HS256
-JWT_EXPIRATION_HOURS=24
 ```
 
-Replace `your_tmdb_api_key_here` with your actual TMDb API key, and generate a secure `JWT_SECRET_KEY`.
+Replace `your_tmdb_api_key_here` with your actual TMDb API key. `DATABASE_URL` is optional and defaults to a local SQLite file in the backend directory.
 
 ## Running the Application
 
@@ -159,21 +148,6 @@ npm start
 ```
 
 The frontend will run on `http://localhost:3000` and automatically open in your browser.
-
-### Production Build
-
-1. **Build the Frontend**:
-
-```bash
-cd frontend
-npm run build
-```
-
-2. **Serve the Backend** (configure your web server to serve the frontend build):
-
-The backend API runs on port 8000. Configure your web server (nginx, Apache, etc.) to:
-- Serve static files from `frontend/build` for frontend routes
-- Proxy API requests to `http://localhost:8000` for `/api/*` routes
 
 ## Usage
 
@@ -228,10 +202,37 @@ The backend API runs on port 8000. Configure your web server (nginx, Apache, etc
 4. Drag and drop to reorder columns
 5. Settings are automatically saved
 
-### Exporting/Importing Profile
+### Updating Tracked Lists from Letterboxd
 
-1. **Export**: Go to Settings → Export Profile to download a ZIP file with all your data
-2. **Import**: Go to Settings → Import Profile to restore from a previously exported ZIP file
+To refresh or add a tracked list from a public Letterboxd list URL (including `boxd.it` short links), use the scraper script:
+
+```bash
+cd backend
+./venv/bin/pip install -r requirements.txt   # includes beautifulsoup4
+./venv/bin/python ../scripts/scrape_letterboxd_list.py \
+  --url "https://boxd.it/8HjM" \
+  --output ../tracked-lists/letterboxd-t500.csv \
+  --list-name "Letterboxd Top 500" \
+  --validate
+```
+
+Options:
+
+- `--stdout` — print CSV instead of writing a file
+- `--slug` — filename stem when using the default `tracked-lists/` output path
+- `--enrich` — fetch individual film pages when a year is missing on the list row
+- `--delay` — seconds between page requests (default: `0.75`)
+
+After generating a CSV:
+
+1. Place it in `tracked-lists/` (or use `--output` to write there directly).
+2. Restart the backend so new list columns are migrated into the database.
+3. Add a display name in `frontend/src/components/filterTypes.js` under `trackedListNames`.
+4. In the app, open **Import and Export** and click **Refresh Tracked Lists**.
+
+### Backing Up Your Data
+
+The full state lives in `backend/watchlist.db` (SQLite). Copy that file to back up; replace it to restore.
 
 ## Project Structure
 
@@ -245,10 +246,12 @@ movieswatchlist.com/
 │   ├── main.py                # FastAPI application entry point
 │   ├── csv_parser.py          # CSV parsing logic
 │   ├── list_processor.py      # Tracked lists processing
+│   ├── letterboxd_list_scraper.py  # Letterboxd list scraping logic
 │   ├── tmdb_client.py         # TMDb API client
-│   ├── profile_export.py       # Profile export/import functionality
 │   ├── utils.py               # Utility functions
 │   └── requirements.txt       # Python dependencies
+├── scripts/
+│   └── scrape_letterboxd_list.py  # CLI to scrape Letterboxd lists to CSV
 ├── frontend/
 │   ├── public/
 │   │   └── index.html
@@ -261,7 +264,6 @@ movieswatchlist.com/
 │   │   └── index.js          # Application entry point
 │   └── package.json
 ├── tracked-lists/             # CSV files for tracked lists (IMDb Top 250, etc.)
-├── TESTING_PROTOCOL.md        # Comprehensive testing documentation
 └── README.md                  # This file
 ```
 
@@ -275,15 +277,11 @@ When the backend is running, API documentation is available at:
 
 ### Database
 
-By default, the application uses SQLite. To use a different database, set the `DATABASE_URL` environment variable:
-
-```env
-DATABASE_URL=postgresql://user:password@localhost/movieswatchlist
-```
+The application uses a local SQLite database (`backend/watchlist.db` by default). The `DATABASE_URL` environment variable can override the location.
 
 ### CORS
 
-CORS is configured to allow requests from `http://localhost:3000` and `http://127.0.0.1:3000` in development. For production, update the CORS configuration in `backend/main.py`.
+CORS is configured to allow requests from `http://localhost:3000` and `http://127.0.0.1:3000` in `backend/main.py`.
 
 ## Development
 
@@ -298,10 +296,6 @@ npm run format:check  # Check formatting
 
 **Backend:**
 Follow PEP 8 style guidelines. Consider using `black` for formatting.
-
-### Testing
-
-See `TESTING_PROTOCOL.md` for comprehensive testing guidelines.
 
 ## Troubleshooting
 

@@ -1,26 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse, Response
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case, not_, bindparam
+from sqlalchemy import Float, String, Integer, cast, func, or_, and_, text, case, not_
 from typing import Optional, Dict, List, Union, Any
-from database import (
-    get_db, get_tracked_list_names, filename_to_column_name, is_postgresql,
-    get_user_db_session, get_user_db_context, get_guest_db_session, UserScopedSession, get_user_schema_name, migrate_user_schema,
-    drop_guest_session, cleanup_expired_guest_schemas, migrate_guest_data_to_user,
-    engine
-)
-from models import Movie, FavoriteDirector, SeenCountry, User
+from database import get_db, get_tracked_list_names, filename_to_column_name, engine, SessionLocal
+from models import Movie, FavoriteDirector, SeenCountry
 from csv_parser import parse_watchlist_csv
 from list_processor import process_all_tracked_lists, check_movie_in_tracked_lists, load_tracked_lists
 from tmdb_client import tmdb_client, extract_enriched_data_from_tmdb
-from auth import (
-    get_current_user, get_current_user_optional, get_current_user_or_guest, get_current_guest,
-    get_current_guest_optional,
-    UserCreate, UserLogin, UserResponse, Token, GuestSession,
-    create_user, authenticate_user, create_access_token, create_guest_session,
-    get_user_by_username
-)
 import logging
 import json
 import requests
@@ -30,331 +17,18 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 from utils import get_project_root
-from sqlalchemy.dialects.postgresql import JSONB
-from profile_export import (
-    export_profile_to_json,
-    create_profile_zip,
-    extract_profile_zip,
-    import_profile_from_json,
-    import_profile_from_json_stream
-)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
-# ==========================================
-# Authentication Routes
-# ==========================================
-
-@router.post("/api/auth/register", response_model=Token)
-async def register(
-    user_data: UserCreate,
-    db: Session = Depends(get_db),
-    guest: Optional[GuestSession] = Depends(get_current_guest_optional),
-):
-    """
-    Register a new user account.
-    Creates a new user and their dedicated database schema.
-    If request includes a valid guest token, migrates guest data to the new account.
-    """
-    if get_user_by_username(db, user_data.username):
-        raise HTTPException(
-            status_code=400,
-            detail="Username already registered"
-        )
-
-    user = create_user(db, user_data)
-    if guest is not None:
-        migrate_guest_data_to_user(guest.session_id, user.id)
-
-    access_token = create_access_token(
-        data={"user_id": user.id, "username": user.username}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-@router.post("/api/auth/login", response_model=Token)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-    guest: Optional[GuestSession] = Depends(get_current_guest_optional),
-):
-    """
-    Login with username and password.
-    Returns a JWT access token.
-    If request includes a valid guest token, migrates guest data to the user account.
-    """
-    user = authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if guest is not None:
-        migrate_guest_data_to_user(guest.session_id, user.id)
-
-    access_token = create_access_token(
-        data={"user_id": user.id, "username": user.username}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-@router.get("/api/auth/me")
-async def get_current_user_info(current_user_or_guest: Union[User, GuestSession] = Depends(get_current_user_or_guest)):
-    """
-    Get current user or guest information.
-    For guests, returns minimal info (id=0, username='Guest', schema_name).
-    """
-    if isinstance(current_user_or_guest, GuestSession):
-        return {
-            "id": 0,
-            "username": "Guest",
-            "schema_name": current_user_or_guest.schema_name,
-            "created_at": current_user_or_guest.created_at.isoformat(),
-            "guest": True,
-        }
-    return UserResponse(
-        id=current_user_or_guest.id,
-        username=current_user_or_guest.username,
-        schema_name=current_user_or_guest.schema_name,
-        created_at=current_user_or_guest.created_at
-    )
-
-
-@router.post("/api/auth/logout")
-async def logout():
-    """
-    Logout the current user.
-    Note: JWT tokens are stateless, so logout is handled client-side by removing the token.
-    This endpoint exists for API consistency and potential future token blacklisting.
-    """
-    return {"message": "Successfully logged out"}
-
-
-@router.post("/api/auth/guest")
-async def guest_login():
-    """
-    Create a new guest session. Returns a JWT with guest claims and session info.
-    """
-    guest, access_token = create_guest_session()
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "guest": True,
-        "session_id": guest.session_id,
-        "expires_at": guest.expires_at.isoformat(),
-    }
-
-
-@router.post("/api/auth/guest/logout")
-async def guest_logout(guest: GuestSession = Depends(get_current_guest)):
-    """
-    Exit guest mode: drop the guest schema and invalidate the session.
-    Client should clear the token after calling this.
-    """
-    drop_guest_session(guest.session_id)
-    return {"message": "Guest session ended"}
-
-
-# ==========================================
-# User Database Session Dependency
-# ==========================================
-
-def get_user_db(current_user: User = Depends(get_current_user)):
-    """
-    Dependency to get a database session scoped to the current user's schema.
-    """
-    session_gen = get_user_db_session(current_user.id, current_user.schema_name)
-    db = next(session_gen)
-    try:
-        yield db
-    finally:
-        try:
-            next(session_gen)
-        except StopIteration:
-            pass
-
-
-def get_user_or_guest_db(current_user_or_guest: Union[User, GuestSession] = Depends(get_current_user_or_guest)):
-    """
-    Dependency to get a database session scoped to the current user or guest schema.
-    """
-    if isinstance(current_user_or_guest, User):
-        session_gen = get_user_db_session(current_user_or_guest.id, current_user_or_guest.schema_name)
-    else:
-        session_gen = get_guest_db_session(current_user_or_guest.session_id)
-    db = next(session_gen)
-    try:
-        yield db
-    finally:
-        try:
-            next(session_gen)
-        except StopIteration:
-            pass
-
-
-# ==========================================
-# User Settings (preferences) API
-# ==========================================
-
-def _prefs_table(schema_name: str, user_id: int) -> str:
-    """Table name for user_preferences: PostgreSQL uses schema, SQLite uses prefix."""
-    if is_postgresql:
-        return f'"{schema_name}".user_preferences'
-    if user_id >= 0:
-        return f"user_{user_id}_user_preferences"
-    return f"{schema_name}_user_preferences"
-
-
-@router.get("/api/user/settings")
-async def get_user_settings(db: UserScopedSession = Depends(get_user_or_guest_db)):
-    """
-    Get the current user's preferences/settings (JSON blob).
-    Returns {} if no row or empty data. Returns {} on error (e.g. table not yet created).
-    """
-    try:
-        migrate_user_schema(db.schema_name)
-        schema_name = db.schema_name
-        user_id = db.user_id
-        prefs_table = _prefs_table(schema_name, user_id)
-        with engine.connect() as conn:
-            if is_postgresql:
-                result = conn.execute(
-                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
-                )
-            else:
-                result = conn.execute(
-                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
-                )
-            row = result.fetchone()
-            conn.commit()
-        if not row or row[0] is None:
-            return {}
-        data = row[0]
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError:
-                return {}
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        logger.exception("GET /api/user/settings failed")
-        return {}
-
-
-@router.put("/api/user/settings")
-async def put_user_settings(
-    body: Dict[str, Any],
-    db: UserScopedSession = Depends(get_user_or_guest_db)
-):
-    """
-    Upsert the current user's preferences/settings (JSON blob).
-    Accepts partial updates; merge with existing server-side blob.
-    """
-    try:
-        migrate_user_schema(db.schema_name)
-        schema_name = db.schema_name
-        user_id = db.user_id
-        prefs_table = _prefs_table(schema_name, user_id)
-        with engine.connect() as conn:
-            if is_postgresql:
-                result = conn.execute(
-                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
-                )
-                row = result.fetchone()
-                existing = row[0] if row and row[0] else None
-                if isinstance(existing, str):
-                    try:
-                        existing = json.loads(existing)
-                    except json.JSONDecodeError:
-                        existing = {}
-                elif not isinstance(existing, dict):
-                    existing = {}
-                merged = {**existing, **body}
-                insert_sql = f'''
-                    INSERT INTO {prefs_table} (id, data, updated_at)
-                    VALUES (1, :data, CURRENT_TIMESTAMP)
-                    ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
-                '''
-                stmt = text(insert_sql).bindparams(bindparam("data", type_=JSONB))
-                conn.execute(stmt, {"data": merged})
-            else:
-                result = conn.execute(
-                    text(f'SELECT data FROM {prefs_table} WHERE id = 1')
-                )
-                row = result.fetchone()
-                existing = row[0] if row and row[0] else None
-                if isinstance(existing, str):
-                    try:
-                        existing = json.loads(existing)
-                    except json.JSONDecodeError:
-                        existing = {}
-                elif not isinstance(existing, dict):
-                    existing = {}
-                merged = {**existing, **body}
-                json_str = json.dumps(merged)
-                conn.execute(
-                    text(f'''
-                        INSERT INTO {prefs_table} (id, data, updated_at)
-                        VALUES (1, :data, CURRENT_TIMESTAMP)
-                        ON CONFLICT (id) DO UPDATE SET data = :data, updated_at = CURRENT_TIMESTAMP
-                    '''),
-                    {"data": json_str}
-                )
-            conn.commit()
-        return {"ok": True}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("PUT /api/user/settings failed")
-        raise HTTPException(status_code=500, detail="Failed to save settings")
-
-
 # Get the path to watchlist.csv (located in the project root, one level up from backend)
 PROJECT_ROOT = get_project_root()
 CSV_FILE_PATH = PROJECT_ROOT / "watchlist.csv"
 
-# Helper function for database-agnostic JSON extraction
 def json_extract_path(column, json_path: str):
-    """
-    Extract value from JSON column using database-appropriate method.
-    json_path: JSON path like '$.release_date' or '$.production_companies[0].name'
-    """
-    if is_postgresql:
-        # PostgreSQL: Convert JSON path to PostgreSQL operators
-        # $.release_date -> ->'release_date'->>'release_date'
-        # $.production_companies[0].name -> ->'production_companies'->0->>'name'
-        path_parts = json_path.replace('$.', '').split('.')
-        if '[' in path_parts[-1]:
-            # Handle array access like [0]
-            last_part = path_parts[-1]
-            field_name = last_part.split('[')[0]
-            array_index = last_part.split('[')[1].split(']')[0]
-            path_parts[-1] = field_name
-            # Build PostgreSQL path: ->'field'->array_index->>'name'
-            expr = column
-            for part in path_parts[:-1]:
-                expr = expr[part]
-            expr = expr[path_parts[-1]][int(array_index)]['name']
-            return expr.astext if hasattr(expr, 'astext') else expr
-        else:
-            # Simple field access: ->>'field'
-            expr = column
-            for part in path_parts:
-                if '[' in part:
-                    # Handle array in middle of path
-                    field_name = part.split('[')[0]
-                    array_index = part.split('[')[1].split(']')[0]
-                    expr = expr[field_name][int(array_index)]
-                else:
-                    expr = expr[part]
-            return expr.astext if hasattr(expr, 'astext') else expr
-    else:
-        # SQLite: Use json_extract
-        return func.json_extract(column, json_path)
+    """Extract value from a JSON column using SQLite's json_extract."""
+    return func.json_extract(column, json_path)
 
 def check_movie_availability(
     movie_tmdb_data: Union[dict, str, None],
@@ -482,19 +156,8 @@ async def process_csv_stream(db: Session, csv_file: Optional[Union[Path, BytesIO
         from database import migrate_db
         migrate_db()
         
-        # Load tracked lists once at the start for efficient matching
         project_root = get_project_root()
         tracked_lists_dir = project_root / "tracked-lists"
-        tracked_lists = load_tracked_lists(tracked_lists_dir)
-        logger.info(f"Loaded {len(tracked_lists)} tracked lists for matching")
-        
-        # Count total tracked lists for progress calculation
-        total_tracked_lists = 0
-        if tracked_lists_dir.exists():
-            total_tracked_lists = len(list(tracked_lists_dir.glob("*.csv")))
-        
-        # Track matches for summary
-        matches_found = {list_data['name']: 0 for list_data in tracked_lists.values()}
         
         movies_data = parse_watchlist_csv(file_source)
         total_movies = len(movies_data)
@@ -537,17 +200,6 @@ async def process_csv_stream(db: Session, csv_file: Optional[Union[Path, BytesIO
                         logger.info(f"Updated created_at for {movie_data['name']} to {date_from_csv}")
                     except Exception as e:
                         logger.warning(f"Error updating date_added for {movie_data['name']}: {str(e)}")
-                
-                # Even if movie exists, check if it's in tracked lists (in case lists were updated)
-                try:
-                    matches_before = {col: getattr(existing, col, False) for col in tracked_lists.keys()}
-                    check_movie_in_tracked_lists(existing, tracked_lists)
-                    # Count new matches
-                    for col, list_data in tracked_lists.items():
-                        if getattr(existing, col, False) and not matches_before.get(col, False):
-                            matches_found[list_data['name']] = matches_found.get(list_data['name'], 0) + 1
-                except Exception as e:
-                    logger.warning(f"Error checking tracked lists for existing movie {movie_data['name']}: {str(e)}")
                 
                 db.flush()  # Flush any changes
                 skipped += 1
@@ -605,41 +257,18 @@ async def process_csv_stream(db: Session, csv_file: Optional[Union[Path, BytesIO
             db.add(movie)
             db.flush()  # Flush to get the movie ID
             
-            # Check if this movie is in any tracked lists
-            try:
-                matches_before = {col: getattr(movie, col, False) for col in tracked_lists.keys()}
-                check_movie_in_tracked_lists(movie, tracked_lists)
-                # Count new matches
-                for col, list_data in tracked_lists.items():
-                    if getattr(movie, col, False) and not matches_before.get(col, False):
-                        matches_found[list_data['name']] = matches_found.get(list_data['name'], 0) + 1
-            except Exception as e:
-                logger.warning(f"Error checking tracked lists for {movie_data['name']}: {str(e)}")
-                # Don't fail the entire processing if tracked list check fails
-            
             processed += 1
             
             # Send progress update after each movie
             # Progress includes movies processed so far (tracked lists will be added after)
             current = index + 1
             yield f"data: {json.dumps({'current': current, 'total': total_work, 'processed': processed, 'skipped': skipped, 'done': False})}\n\n"
-            
-            # Small delay to allow UI updates
-            await asyncio.sleep(0.01)
         
         # Commit all changes (including updates to existing movies' date_added)
         db.commit()
         logger.info(f"Committed changes: {processed} new movies, {skipped} existing movies (dates updated if provided in CSV)")
         
-        # Log summary of matches
-        if matches_found:
-            match_summary = ", ".join([f"{name}: {count}" for name, count in matches_found.items() if count > 0])
-            if match_summary:
-                logger.info(f"Tracked list matches: {match_summary}")
-            else:
-                logger.warning("No movies matched to any tracked lists!")
-        
-        # Process all tracked lists to ensure all movies (including existing ones) are matched
+        # Batch-match all movies to tracked lists (single authoritative pass)
         # Movies progress is already at 100%, now process tracked lists
         logger.info("Processing all tracked lists to update movie memberships...")
         tracked_lists_results = {}
@@ -650,8 +279,6 @@ async def process_csv_stream(db: Session, csv_file: Optional[Union[Path, BytesIO
             for update in process_all_tracked_lists(db, tracked_lists_dir):
                 if update.get('type') == 'complete':
                     tracked_lists_results = update.get('results', {})
-                # Small delay to allow processing
-                await asyncio.sleep(0.01)
             
             # Log tracked lists processing results
             if tracked_lists_results:
@@ -694,23 +321,12 @@ async def process_csv_with_selections_stream(
         
         # Only load tracked lists and migrate DB if we're adding movies
         # (For removals only, we don't need tracked lists)
-        tracked_lists = {}
         tracked_lists_dir = None
-        total_tracked_lists = 0
         if movies_to_add:
-            # Ensure database has all tracked list columns
             from database import migrate_db
             migrate_db()
-            
-            # Load tracked lists
             project_root = get_project_root()
             tracked_lists_dir = project_root / "tracked-lists"
-            tracked_lists = load_tracked_lists(tracked_lists_dir)
-            logger.info(f"Loaded {len(tracked_lists)} tracked lists for matching")
-            
-            # Count total tracked lists for progress calculation
-            if tracked_lists_dir.exists():
-                total_tracked_lists = len(list(tracked_lists_dir.glob("*.csv")))
         
         # Create a lookup for movies to add (by URI)
         movies_to_add_map = {
@@ -750,7 +366,6 @@ async def process_csv_with_selections_stream(
                 
                 current = processed_add + processed_remove + skipped
                 yield f"data: {json.dumps({'current': current, 'total': total, 'processed': processed_add, 'skipped': skipped, 'removed': processed_remove, 'done': False})}\n\n"
-                await asyncio.sleep(0.01)
         
         # Commit removals before processing additions
         db.commit()
@@ -765,9 +380,6 @@ async def process_csv_with_selections_stream(
             final_total = total_remove
             yield f"data: {json.dumps({'current': final_total, 'total': final_total, 'processed': processed_add, 'skipped': skipped, 'removed': processed_remove, 'done': True, 'message': f'Removed {processed_remove} movies'})}\n\n"
             return
-        
-        # Track matches for summary
-        matches_found = {list_data['name']: 0 for list_data in tracked_lists.values()}
         
         # Parse CSV to get all movie data
         csv_file.seek(0)  # Reset file pointer
@@ -866,33 +478,16 @@ async def process_csv_with_selections_stream(
             db.add(movie)
             db.flush()
             
-            # Check tracked lists
-            try:
-                matches_before = {col: getattr(movie, col, False) for col in tracked_lists.keys()}
-                check_movie_in_tracked_lists(movie, tracked_lists)
-                for col, list_data in tracked_lists.items():
-                    if getattr(movie, col, False) and not matches_before.get(col, False):
-                        matches_found[list_data['name']] = matches_found.get(list_data['name'], 0) + 1
-            except Exception as e:
-                logger.warning(f"Error checking tracked lists for {movie_data['name']}: {str(e)}")
-            
             processed_add += 1
             # Progress includes movies processed so far (tracked lists will be added after)
             current = processed_add + processed_remove + skipped
             yield f"data: {json.dumps({'current': current, 'total': total, 'processed': processed_add, 'skipped': skipped, 'removed': processed_remove, 'done': False})}\n\n"
-            await asyncio.sleep(0.01)
         
         # Commit all changes (including updates to existing movies' date_added)
         db.commit()
         logger.info(f"Committed changes: {processed_add} new movies added, {processed_remove} movies removed, {skipped} existing movies (dates updated if provided in CSV)")
         
-        # Log summary
-        if matches_found:
-            match_summary = ", ".join([f"{name}: {count}" for name, count in matches_found.items() if count > 0])
-            if match_summary:
-                logger.info(f"Tracked list matches: {match_summary}")
-        
-        # Process tracked lists (after all movies are done)
+        # Batch-match all movies to tracked lists (single authoritative pass)
         # Movies progress is already at 100%, now process tracked lists
         tracked_lists_results = {}
         try:
@@ -902,8 +497,6 @@ async def process_csv_with_selections_stream(
             for update in process_all_tracked_lists(db, tracked_lists_dir):
                 if update.get('type') == 'complete':
                     tracked_lists_results = update.get('results', {})
-                # Small delay to allow processing
-                await asyncio.sleep(0.01)
         except Exception as e:
             logger.warning(f"Error processing tracked lists: {str(e)} - continuing anyway")
         
@@ -917,7 +510,7 @@ async def process_csv_with_selections_stream(
 
 
 @router.post("/api/upload")
-async def process_csv(db = Depends(get_user_or_guest_db)):
+async def process_csv(db: Session = Depends(get_db)):
     """
     Process the local watchlist.csv file with progress streaming.
     """
@@ -937,7 +530,7 @@ async def preview_csv_options():
     return {"message": "OK"}
 
 @router.post("/api/preview-csv")
-async def preview_csv(file: UploadFile = File(...), db = Depends(get_user_or_guest_db)):
+async def preview_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Preview CSV import - identifies movies to add and movies to remove.
     Returns preview data without making any changes to the database.
@@ -1015,7 +608,7 @@ async def preview_csv(file: UploadFile = File(...), db = Depends(get_user_or_gue
 async def process_csv_with_selections(
     file: UploadFile = File(...),
     selections: str = Form(...),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Process CSV with user selections (movies to add, movies to remove).
@@ -1055,7 +648,7 @@ async def process_csv_with_selections(
 
 
 @router.post("/api/upload-csv")
-async def upload_csv(file: UploadFile = File(...), db = Depends(get_user_or_guest_db)):
+async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Upload and process a CSV file with progress streaming.
     """
@@ -1126,7 +719,7 @@ def get_movies(
     availability_exclude: bool = Query(False, description="Exclude movies matching availability types instead of including them"),
     preferred_services: Optional[List[int]] = Query(None, description="List of preferred streaming service provider IDs for availability filtering"),
     count_only: Optional[bool] = Query(None, description="If true, return only total count (faster for random picker)"),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Get movies with optional filtering and sorting.
@@ -1670,13 +1263,8 @@ def get_movies(
             return Movie.title
         elif field == "year":
             # Sort by release_date from tmdb_data (more precise than year), fallback to year if release_date is missing
-            if is_postgresql:
-                # PostgreSQL: Use ->> operator for JSON field access (returns text)
-                release_date_expr = text("movies.tmdb_data->>'release_date'")
-                year_fallback = func.to_char(Movie.year, 'FM9999') + '-01-01'
-            else:
-                release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
-                year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
+            release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
+            year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
             return func.coalesce(release_date_expr, year_fallback)
         elif field == "runtime":
             return Movie.runtime
@@ -1687,52 +1275,28 @@ def get_movies(
         elif field == "original_language":
             return Movie.original_language
         elif field == "production_company":
-            # Extract first production company from tmdb_data JSON array
-            # Note: This is only used for non-first sorts. First sort uses expansion logic.
-            if is_postgresql:
-                # PostgreSQL: ->'production_companies'->0->>'name'
-                first_company = text("movies.tmdb_data->'production_companies'->0->>'name'")
-            else:
-                first_company = func.json_extract(Movie.tmdb_data, '$.production_companies[0].name')
+            first_company = func.json_extract(Movie.tmdb_data, '$.production_companies[0].name')
             return func.coalesce(first_company, '')
         elif field == "genres":
-            # Sort genres by first genre alphabetically
-            # Extract first genre from JSON array and convert to string for sorting
-            if is_postgresql:
-                # PostgreSQL: ->0->>'' for array access
-                first_genre = text("movies.genres->0")
-            else:
-                first_genre = func.json_extract(Movie.genres, '$[0]')
+            first_genre = func.json_extract(Movie.genres, '$[0]')
             return func.coalesce(first_genre, '')
         elif field == "in_collection":
-            # Boolean: check if belongs_to_collection exists in tmdb_data
-            # Returns 1 if collection exists, 0/null if not
-            if is_postgresql:
-                # PostgreSQL: Use -> operator to check if key exists
-                return text("CASE WHEN movies.tmdb_data->'belongs_to_collection' IS NOT NULL THEN 1 ELSE 0 END")
-            else:
-                collection_expr = func.json_extract(Movie.tmdb_data, '$.belongs_to_collection')
-                return case(
-                    (collection_expr.isnot(None), 1),
-                    else_=0
-                )
+            collection_expr = func.json_extract(Movie.tmdb_data, '$.belongs_to_collection')
+            return case(
+                (collection_expr.isnot(None), 1),
+                else_=0
+            )
         elif field == "is_favorite":
             return Movie.is_favorite
         elif field == "date_added":
             return Movie.created_at
         elif field.startswith("is_"):
             # Handle tracked list columns (dynamically added, stored as INTEGER)
-            # Use text() to safely reference the column by name
-            # Since these columns are dynamically added, we use text() to avoid AttributeError
             return text(f"movies.{field}")
         else:
             # Default: sort by release_date (fallback to year)
-            if is_postgresql:
-                release_date_expr = text("movies.tmdb_data->>'release_date'")
-                year_fallback = func.to_char(Movie.year, 'FM9999') + '-01-01'
-            else:
-                release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
-                year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
+            release_date_expr = func.json_extract(Movie.tmdb_data, '$.release_date')
+            year_fallback = text("CAST(movies.year AS TEXT) || '-01-01'")
             return func.coalesce(release_date_expr, year_fallback)
     
     # Parse sorts to determine if we need expansion (genres or production_company)
@@ -2161,7 +1725,7 @@ def get_movies(
     }
 
 @router.get("/api/movies/stats")
-def get_stats(db = Depends(get_user_or_guest_db)):
+def get_stats(db: Session = Depends(get_db)):
     """
     Get statistics about the movie collection.
     """
@@ -2223,7 +1787,7 @@ def get_stats(db = Depends(get_user_or_guest_db)):
     }
 
 @router.get("/api/movies/directors")
-def get_directors(db = Depends(get_user_or_guest_db)):
+def get_directors(db: Session = Depends(get_db)):
     """
     Get list of all unique directors.
     """
@@ -2234,7 +1798,7 @@ def get_directors(db = Depends(get_user_or_guest_db)):
     return [d[0] for d in directors if d[0]]
 
 @router.get("/api/movies/countries")
-def get_countries(db = Depends(get_user_or_guest_db)):
+def get_countries(db: Session = Depends(get_db)):
     """
     Get list of all unique countries.
     """
@@ -2245,7 +1809,7 @@ def get_countries(db = Depends(get_user_or_guest_db)):
     return [c[0] for c in countries if c[0]]
 
 @router.get("/api/movies/genres")
-def get_genres(db = Depends(get_user_or_guest_db)):
+def get_genres(db: Session = Depends(get_db)):
     """
     Get list of all unique genres.
     """
@@ -2258,7 +1822,7 @@ def get_genres(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_genres))
 
 @router.get("/api/movies/original-languages")
-def get_original_languages(db = Depends(get_user_or_guest_db)):
+def get_original_languages(db: Session = Depends(get_db)):
     """
     Get list of all unique original languages.
     """
@@ -2280,7 +1844,7 @@ def get_original_languages(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_languages))
 
 @router.get("/api/movies/production-companies")
-def get_production_companies(db = Depends(get_user_or_guest_db)):
+def get_production_companies(db: Session = Depends(get_db)):
     """
     Get list of all unique production companies.
     """
@@ -2305,7 +1869,7 @@ def get_production_companies(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_companies))
 
 @router.get("/api/movies/spoken-languages")
-def get_spoken_languages(db = Depends(get_user_or_guest_db)):
+def get_spoken_languages(db: Session = Depends(get_db)):
     """
     Get list of all unique spoken languages (ISO codes).
     """
@@ -2330,7 +1894,7 @@ def get_spoken_languages(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_languages))
 
 @router.get("/api/movies/actors")
-def get_actors(db = Depends(get_user_or_guest_db)):
+def get_actors(db: Session = Depends(get_db)):
     """
     Get list of all unique actors from cast.
     """
@@ -2356,7 +1920,7 @@ def get_actors(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_actors))
 
 @router.get("/api/movies/writers")
-def get_writers(db = Depends(get_user_or_guest_db)):
+def get_writers(db: Session = Depends(get_db)):
     """
     Get list of all unique writers from crew.
     """
@@ -2384,7 +1948,7 @@ def get_writers(db = Depends(get_user_or_guest_db)):
     return sorted(list(all_writers))
 
 @router.get("/api/movies/producers")
-def get_producers(db = Depends(get_user_or_guest_db)):
+def get_producers(db: Session = Depends(get_db)):
     """
     Get list of all unique producers from crew.
     """
@@ -2415,7 +1979,7 @@ def get_producers(db = Depends(get_user_or_guest_db)):
 def search_tmdb_movie(
     title: str = Query(...),
     year: Optional[int] = Query(None),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Search for movies on TMDB by title and optional year.
@@ -2502,7 +2066,7 @@ def export_movies(
     search: Optional[str] = Query(None),
     favorites_only: Optional[bool] = Query(None),
     list_filters: Optional[str] = Query(None),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Export movies in various formats (CSV, JSON, Markdown).
@@ -2674,7 +2238,7 @@ def export_movies(
         )
 
 @router.get("/api/movies/{movie_id}")
-def get_movie(movie_id: int, db = Depends(get_user_or_guest_db)):
+def get_movie(movie_id: int, db: Session = Depends(get_db)):
     """
     Get a single movie by ID with all TMDB data.
     """
@@ -2735,7 +2299,7 @@ def get_movie(movie_id: int, db = Depends(get_user_or_guest_db)):
 @router.post("/api/movies")
 def add_movie(
     movie_data: Dict[str, Any] = Body(...),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Add a new movie to the database.
@@ -2910,7 +2474,7 @@ def add_movie(
 @router.get("/api/movies/tmdb/{tmdb_id}/details")
 def get_tmdb_movie_details(
     tmdb_id: int,
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Get full movie details from TMDB by TMDB ID.
@@ -2972,7 +2536,7 @@ def get_tmdb_movie_details(
 def set_movie_favorite(
     movie_id: int,
     is_favorite: bool = Body(..., embed=True),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Set favorite flag for a movie.
@@ -2994,7 +2558,7 @@ def set_movie_favorite(
 def set_movie_notes(
     movie_id: int,
     notes: str = Body(..., embed=True),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Set notes for a movie.
@@ -3020,7 +2584,7 @@ def set_movie_notes(
 def set_movie_seen_before(
     movie_id: int,
     seen_before: bool = Body(..., embed=True),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Set seen_before flag for a movie.
@@ -3041,7 +2605,7 @@ def set_movie_seen_before(
 @router.delete("/api/movies/{movie_id}")
 def delete_movie(
     movie_id: int,
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Delete a movie from the database.
@@ -3065,7 +2629,7 @@ def delete_movie(
         raise HTTPException(status_code=500, detail=f"Error deleting movie: {str(e)}")
 
 @router.get("/api/movies/{movie_id}/collection")
-def get_collection_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
+def get_collection_movies(movie_id: int, db: Session = Depends(get_db)):
     """
     Get all movies in the same collection as the specified movie.
     Returns all movies from TMDB collection, with flags indicating which ones are in the database.
@@ -3195,7 +2759,7 @@ def get_collection_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
     }
 
 @router.get("/api/movies/{movie_id}/similar")
-def get_similar_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
+def get_similar_movies(movie_id: int, db: Session = Depends(get_db)):
     """
     Get similar movies for the specified movie.
     Only returns movies that are already in the watchlist database.
@@ -3274,7 +2838,7 @@ def get_similar_movies(movie_id: int, db = Depends(get_user_or_guest_db)):
         }
 
 @router.get("/api/movies/director/{director_name}")
-def get_director_movies(director_name: str, db = Depends(get_user_or_guest_db)):
+def get_director_movies(director_name: str, db: Session = Depends(get_db)):
     """
     Get all movies by a specific director.
     Returns movies from both the database and TMDB, with flags indicating which ones are in the database.
@@ -3400,7 +2964,7 @@ def get_director_movies(director_name: str, db = Depends(get_user_or_guest_db)):
     }
 
 @router.get("/api/directors/favorites")
-def get_favorite_directors(db = Depends(get_user_or_guest_db)):
+def get_favorite_directors(db: Session = Depends(get_db)):
     """
     Get list of all favorited directors.
     """
@@ -3412,7 +2976,7 @@ def get_favorite_directors(db = Depends(get_user_or_guest_db)):
 @router.post("/api/directors/favorites")
 def add_favorite_director(
     director_name: str = Body(..., embed=True),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Add a director to favorites.
@@ -3441,7 +3005,7 @@ def add_favorite_director(
 @router.delete("/api/directors/favorites/{director_name}")
 def remove_favorite_director(
     director_name: str,
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Remove a director from favorites.
@@ -3462,7 +3026,7 @@ def remove_favorite_director(
     }
 
 @router.get("/api/countries/seen")
-def get_seen_countries(db = Depends(get_user_or_guest_db)):
+def get_seen_countries(db: Session = Depends(get_db)):
     """
     Get list of all seen countries.
     """
@@ -3474,7 +3038,7 @@ def get_seen_countries(db = Depends(get_user_or_guest_db)):
 @router.post("/api/countries/seen")
 def add_seen_country(
     country_name: str = Body(..., embed=True),
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Add a country to the seen list.
@@ -3503,7 +3067,7 @@ def add_seen_country(
 @router.delete("/api/countries/seen/{country_name}")
 def remove_seen_country(
     country_name: str,
-    db = Depends(get_user_or_guest_db)
+    db: Session = Depends(get_db)
 ):
     """
     Remove a country from the seen list.
@@ -3524,7 +3088,7 @@ def remove_seen_country(
     }
 
 @router.get("/api/movies/{movie_id}/streaming")
-def get_movie_streaming(movie_id: int, country_code: str = Query("US", description="ISO 3166-1 country code"), db = Depends(get_user_or_guest_db)):
+def get_movie_streaming(movie_id: int, country_code: str = Query("US", description="ISO 3166-1 country code"), db: Session = Depends(get_db)):
     """
     Get streaming availability for a movie in a specific country.
     Extracts watch providers from cached tmdb_data.
@@ -3658,7 +3222,7 @@ def get_streaming_services():
         raise HTTPException(status_code=500, detail=f"Error fetching streaming services: {str(e)}")
 
 @router.post("/api/movies/recache")
-def recache_movies(db = Depends(get_user_or_guest_db)):
+def recache_movies(db: Session = Depends(get_db)):
     """
     Recache all movies by fetching fresh TMDB data for each movie.
     """
@@ -3706,7 +3270,7 @@ def recache_movies(db = Depends(get_user_or_guest_db)):
 
 
 @router.post("/api/movies/clear-cache")
-def clear_cache(db = Depends(get_user_or_guest_db)):
+def clear_cache(db: Session = Depends(get_db)):
     """
     Clear all movies from the database (clears all movie records and cache).
     This ensures that when processing CSV again, movies will be treated as new and fresh data will be fetched.
@@ -3734,15 +3298,11 @@ def clear_cache(db = Depends(get_user_or_guest_db)):
         raise HTTPException(status_code=500, detail=f"Error deleting movies: {str(e)}")
 
 @router.post("/api/movies/process-tracked-lists")
-def process_tracked_lists(db = Depends(get_user_or_guest_db)):
+def process_tracked_lists(db: Session = Depends(get_db)):
     """
     Process all CSV files in the tracked-lists directory and update movie list memberships.
     """
     try:
-        # Ensure user schema has all tracked list columns before processing
-        if hasattr(db, 'schema_name'):
-            migrate_user_schema(db.schema_name)
-
         project_root = get_project_root()
         tracked_lists_dir = project_root / "tracked-lists"
 
@@ -3762,392 +3322,3 @@ def process_tracked_lists(db = Depends(get_user_or_guest_db)):
         raise HTTPException(status_code=500, detail=f"Error processing tracked lists: {str(e)}")
 
 
-@router.post("/api/export-profile")
-def export_profile(
-    include_tmdb_data: bool = Body(True, description="Include full TMDB data in export"),
-    preferences: Optional[Dict[str, Any]] = Body(None, description="User preferences to include in export"),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
-    db = Depends(get_user_or_guest_db)
-):
-    """
-    Export user profile (all movies, favorites, preferences) to a ZIP file.
-    
-    Request Body:
-        include_tmdb_data: Whether to include full TMDB data cache (default: True)
-        preferences: Optional user preferences dict (from localStorage)
-    
-    Returns:
-        ZIP file containing profile.json
-    """
-    try:
-        # Build JSON structure with preferences (or empty dict if not provided)
-        json_data = export_profile_to_json(db, include_tmdb_data, preferences or {})
-        
-        # Create ZIP file
-        zip_buffer = create_profile_zip(json_data)
-        
-        # Generate filename with timestamp
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
-        filename = f"profile-export-{timestamp}.zip"
-        
-        # Create a temporary file or use BytesIO with custom response
-        from tempfile import NamedTemporaryFile
-        import os
-        
-        # Create temporary file
-        temp_file = NamedTemporaryFile(delete=False, suffix='.zip')
-        try:
-            temp_file.write(zip_buffer.read())
-            temp_file.close()
-            
-            # Clean up temp file after response
-            background_tasks.add_task(os.unlink, temp_file.name)
-            
-            # Return file response
-            return FileResponse(
-                temp_file.name,
-                media_type="application/zip",
-                filename=filename
-            )
-        except Exception as e:
-            # Clean up on error
-            if os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
-            raise
-        
-    except Exception as e:
-        logger.error(f"Error exporting profile: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error exporting profile: {str(e)}")
-
-
-def process_tmdb_data_stream(db: Session, movies_to_process: List[Movie]):
-    """
-    Generator function that processes movies to fetch TMDB data and yields progress updates.
-    
-    Args:
-        db: Database session
-        movies_to_process: List of Movie objects that need TMDB data
-    """
-    total = len(movies_to_process)
-    
-    if total == 0:
-        yield f"data: {json.dumps({'current': 0, 'total': 0, 'processed': 0, 'failed': 0, 'done': True})}\n\n"
-        return
-    
-    # Send initial progress
-    yield f"data: {json.dumps({'current': 0, 'total': total, 'processed': 0, 'failed': 0, 'done': False})}\n\n"
-    
-    processed_count = 0
-    failed_count = 0
-    
-    for index, movie in enumerate(movies_to_process):
-        try:
-            # Fetch TMDB data for the movie
-            enriched_data = tmdb_client.enrich_movie_data(movie.title, movie.year)
-            
-            if enriched_data:
-                # Update movie with TMDB data
-                # Always update fields that are missing or None, even if we have partial data
-                if enriched_data.get('director'):
-                    movie.director = enriched_data.get('director')
-                if enriched_data.get('country'):
-                    movie.country = enriched_data.get('country')
-                if enriched_data.get('runtime'):
-                    movie.runtime = enriched_data.get('runtime')
-                if enriched_data.get('genres'):
-                    movie.genres = enriched_data.get('genres', [])
-                if enriched_data.get('tmdb_id'):
-                    movie.tmdb_id = enriched_data.get('tmdb_id')
-                if enriched_data.get('tmdb_data'):
-                    movie.tmdb_data = enriched_data.get('tmdb_data')
-                processed_count += 1
-            else:
-                logger.warning(f"Could not fetch TMDB data for {movie.title} ({movie.year})")
-                failed_count += 1
-        except Exception as e:
-            logger.error(f"Error fetching TMDB data for {movie.title}: {str(e)}")
-            failed_count += 1
-        
-        # Yield progress update
-        yield f"data: {json.dumps({'current': index + 1, 'total': total, 'processed': processed_count, 'failed': failed_count, 'done': False})}\n\n"
-    
-    # Commit TMDB data updates
-    try:
-        db.commit()
-        logger.info(f"Processed {processed_count} movies with TMDB data, {failed_count} failed")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error committing TMDB data: {str(e)}", exc_info=True)
-        yield f"data: {json.dumps({'error': f'Error committing TMDB data: {str(e)}', 'done': True})}\n\n"
-        return
-    
-    # Process tracked lists after TMDB processing completes
-    # This ensures all movies (with complete TMDB data) are checked against tracked lists
-    try:
-        project_root = get_project_root()
-        tracked_lists_dir = project_root / "tracked-lists"
-        if tracked_lists_dir.exists():
-            logger.info("Processing tracked lists after TMDB processing...")
-            tracked_lists_results = {}
-            # Iterate over generator to get final results
-            for update in process_all_tracked_lists(db, tracked_lists_dir):
-                if update.get('type') == 'complete':
-                    tracked_lists_results = update.get('results', {})
-            if tracked_lists_results:
-                for list_name, result in tracked_lists_results.items():
-                    logger.info(f"{list_name}: {result.get('matched', 0)}/{result.get('total', 0)} matched")
-            logger.info("Tracked lists processing completed")
-        else:
-            logger.warning(f"Tracked lists directory not found: {tracked_lists_dir}")
-    except Exception as e:
-        logger.warning(f"Error processing tracked lists after TMDB processing: {str(e)} - continuing anyway")
-        # Don't fail the entire processing if tracked lists processing fails
-    
-    # Send completion
-    yield f"data: {json.dumps({'current': total, 'total': total, 'processed': processed_count, 'failed': failed_count, 'done': True})}\n\n"
-
-
-@router.options("/api/import-profile")
-async def import_profile_options():
-    """Handle CORS preflight for import-profile endpoint"""
-    return {"message": "OK"}
-
-@router.post("/api/import-profile")
-async def import_profile(
-    file: UploadFile = File(...),
-    db = Depends(get_user_or_guest_db),
-    background_tasks: BackgroundTasks = BackgroundTasks()
-):
-    """
-    Import user profile from a ZIP file with streaming progress for TMDB data fetching.
-    
-    This will:
-    1. Extract and validate the ZIP file
-    2. Clear all existing movies, favorite directors, and seen countries from the database
-    3. Import movies (including seen_before, notes), favorite directors, and seen countries from the profile JSON
-    4. If TMDB data is missing, stream progress while fetching it
-    
-    Returns:
-        StreamingResponse with progress updates
-    """
-    try:
-        # Validate file type first (quick check before streaming)
-        if not file.filename or not file.filename.endswith('.zip'):
-            raise HTTPException(status_code=400, detail="File must be a ZIP file")
-        
-        # Stream the import process with progress updates
-        async def generate_stream():
-            import_result = None
-            
-            # Send initial message IMMEDIATELY to establish connection and prevent timeout
-            # This must be sent before any file processing to keep Railway connection alive
-            yield f"data: {json.dumps({'import_phase': 'receiving', 'message': 'Receiving profile file...'})}\n\n"
-            await asyncio.sleep(0.01)  # Small delay to ensure chunk is sent
-            
-            try:
-                # Read uploaded file - read in one go (FastAPI handles streaming)
-                # Send keep-alive message before reading
-                yield f"data: {json.dumps({'import_phase': 'reading', 'message': 'Reading profile file...'})}\n\n"
-                await asyncio.sleep(0.01)
-                
-                # Read entire file (FastAPI may have already buffered it)
-                file_contents = await file.read()
-                zip_buffer = BytesIO(file_contents)
-                
-                # Send message that file is received
-                yield f"data: {json.dumps({'import_phase': 'extracting', 'message': 'Extracting profile data...'})}\n\n"
-                await asyncio.sleep(0.01)
-                
-                # Extract and validate ZIP
-                try:
-                    json_data = extract_profile_zip(zip_buffer)
-                except ValueError as e:
-                    yield f"data: {json.dumps({'error': f'Invalid profile file: {str(e)}', 'done': True})}\n\n"
-                    return
-                
-                # Extract preferences from JSON (will be handled by frontend)
-                preferences = json_data.get("preferences", {})
-                
-                # Send message that extraction is complete
-                yield f"data: {json.dumps({'import_phase': 'starting', 'message': 'Starting import...'})}\n\n"
-                await asyncio.sleep(0.01)
-                
-                # Stream import progress - convert sync generator to async
-                import_gen = import_profile_from_json_stream(db, json_data)
-                try:
-                    while True:
-                        chunk = next(import_gen)
-                        
-                        # Check if this is the import_complete message before yielding
-                        # Chunk format is: "data: {...}\n\n"
-                        if 'import_complete' in chunk:
-                            try:
-                                # Parse the chunk to get import result
-                                # Remove 'data: ' prefix and trailing newlines
-                                chunk_data = chunk.replace('data: ', '').strip()
-                                if chunk_data:
-                                    import_result_data = json.loads(chunk_data)
-                                    if import_result_data.get('import_complete'):
-                                        import_result = {
-                                            'movies_imported': import_result_data['movies_imported'],
-                                            'movies_failed': import_result_data['movies_failed'],
-                                            'errors': import_result_data.get('errors', [])
-                                        }
-                                        
-                                        # Yield import_complete message with preferences instead of the original chunk
-                                        yield f"data: {json.dumps({'import_complete': True, 'movies_imported': import_result['movies_imported'], 'movies_failed': import_result['movies_failed'], 'errors': import_result['errors'], 'preferences': preferences, 'done': False})}\n\n"
-                                        # Give event loop control before continuing
-                                        await asyncio.sleep(0.001)  # Small delay to ensure chunk is sent
-                                        continue
-                            except Exception as e:
-                                logger.warning(f"Error parsing import result: {str(e)}")
-                        
-                        # Forward all other progress chunks as-is
-                        yield chunk
-                        
-                        # Give the event loop a chance to process and send the chunk immediately
-                        # Small delay ensures chunks are sent incrementally rather than batched
-                        # This is critical to prevent Railway timeouts - chunks must be sent frequently
-                        if 'import_phase' in chunk or 'import_complete' in chunk:
-                            await asyncio.sleep(0.01)  # 10ms delay for progress updates to ensure they're sent
-                        else:
-                            await asyncio.sleep(0.001)  # Minimal delay for other messages
-                except StopIteration:
-                    pass  # Generator exhausted
-                
-                # If import didn't complete, we can't continue  
-                if not import_result:
-                    logger.error("Import did not complete successfully")
-                    return
-                    
-                # Post-import: only fetch from TMDB API for movies that truly lack tmdb_data.
-                # Movies that have tmdb_data from the import must not be sent to the API stream,
-                # or we overwrite imported data when the API fails or returns empty.
-                def _has_usable_tmdb_data(m):
-                    td = m.tmdb_data
-                    if td is None:
-                        return False
-                    if isinstance(td, dict):
-                        return bool(td)
-                    if isinstance(td, str):
-                        try:
-                            d = json.loads(td)
-                            return isinstance(d, dict) and bool(d)
-                        except Exception:
-                            return False
-                    return False
-
-                def _needs_denormalized_backfill(m):
-                    if not _has_usable_tmdb_data(m):
-                        return False
-                    return (
-                        m.director is None or m.country is None or m.runtime is None or
-                        m.genres is None or (isinstance(m.genres, list) and len(m.genres) == 0)
-                    )
-
-                all_imported_movies = db.query(Movie).all()
-                movies_needing_api = [m for m in all_imported_movies if not _has_usable_tmdb_data(m)]
-                movies_needing_backfill = [m for m in all_imported_movies if _needs_denormalized_backfill(m)]
-
-                # Backfill director/country/runtime/genres from existing tmdb_data (no API call)
-                if movies_needing_backfill:
-                    logger.info(f"Backfilling denormalized fields from imported TMDB data for {len(movies_needing_backfill)} movies")
-                    for movie in movies_needing_backfill:
-                        try:
-                            td = movie.tmdb_data
-                            if isinstance(td, str):
-                                try:
-                                    td = json.loads(td)
-                                except Exception:
-                                    continue
-                            if not isinstance(td, dict):
-                                continue
-                            enriched = extract_enriched_data_from_tmdb(td)
-                            if enriched.get('director') is not None:
-                                movie.director = enriched['director']
-                            if enriched.get('country') is not None:
-                                movie.country = enriched['country']
-                            if enriched.get('runtime') is not None:
-                                movie.runtime = enriched['runtime']
-                            if enriched.get('genres'):
-                                movie.genres = enriched['genres']
-                            if enriched.get('tmdb_id') is not None:
-                                movie.tmdb_id = enriched['tmdb_id']
-                        except Exception as e:
-                            logger.warning(f"Backfill from tmdb_data failed for {movie.title}: {e}")
-                    try:
-                        db.commit()
-                    except Exception as e:
-                        logger.warning(f"Commit after backfill failed: {e}")
-                        db.rollback()
-
-                # Only fetch from TMDB API for movies that lack tmdb_data
-                if len(movies_needing_api) > 0 and tmdb_client and import_result["movies_imported"] > 0:
-                    logger.info(f"Fetching TMDB data for {len(movies_needing_api)} imported movies (missing tmdb_data)")
-                    
-                    # Send a message indicating TMDB processing is starting
-                    yield f"data: {json.dumps({'tmdb_processing_starting': True, 'total_movies': len(movies_needing_api)})}\n\n"
-                    await asyncio.sleep(0.001)
-                    
-                    # Stream TMDB processing (only for movies that have no tmdb_data)
-                    for chunk in process_tmdb_data_stream(db, movies_needing_api):
-                        yield chunk
-                        await asyncio.sleep(0.001)
-                else:
-                    # No TMDB processing needed - send completion immediately
-                    # Tracked lists will be processed in the background after completion message is sent
-                    yield f"data: {json.dumps({'current': import_result['movies_imported'], 'total': import_result['movies_imported'], 'processed': 0, 'failed': 0, 'tmdb_data_fetched': 0, 'done': True})}\n\n"
-                    
-                    # Schedule tracked lists processing to run in background after response is sent.
-                    # Use user-scoped session so we update the current user's movies, not the default schema.
-                    user_id_val = getattr(db, 'user_id', None)
-                    schema_name_val = getattr(db, 'schema_name', None)
-                    def process_tracked_lists_background():
-                        """Background task to process tracked lists after import completes."""
-                        try:
-                            tracked_lists_dir = PROJECT_ROOT / "tracked-lists"
-                            if tracked_lists_dir.exists() and user_id_val is not None and schema_name_val:
-                                logger.info("Processing tracked lists after import (background task)...")
-                                migrate_user_schema(schema_name_val)
-                                with get_user_db_context(user_id_val, schema_name_val) as user_db:
-                                    tracked_lists_results = {}
-                                    for update in process_all_tracked_lists(user_db, tracked_lists_dir):
-                                        if update.get('type') == 'complete':
-                                            tracked_lists_results = update.get('results', {})
-                                    if tracked_lists_results:
-                                        for list_name, result in tracked_lists_results.items():
-                                            logger.info(f"{list_name}: {result.get('matched', 0)}/{result.get('total', 0)} matched")
-                                    logger.info("Tracked lists processing completed")
-                            elif not tracked_lists_dir.exists():
-                                logger.warning(f"Tracked lists directory not found: {tracked_lists_dir}")
-                            else:
-                                logger.warning("Skipping tracked lists background task: no user schema info")
-                        except Exception as e:
-                            logger.warning(f"Error processing tracked lists after import: {str(e)} - continuing anyway")
-                            # Don't fail the entire import if tracked lists processing fails
-                    
-                    # Add background task - it will run after the streaming response completes
-                    background_tasks.add_task(process_tracked_lists_background)
-            
-            except Exception as e:
-                logger.error(f"Error in import stream: {str(e)}", exc_info=True)
-                yield f"data: {json.dumps({'error': f'Error during import: {str(e)}', 'done': True})}\n\n"
-                return
-        
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            },
-            background=background_tasks
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error importing profile: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error importing profile: {str(e)}")

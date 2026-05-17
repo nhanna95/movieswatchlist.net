@@ -1,6 +1,5 @@
 import axios from 'axios';
 import qs from 'qs';
-import { getToken, removeToken } from './auth';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -51,34 +50,6 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to add JWT token to all requests
-api.interceptors.request.use(
-  (config) => {
-    const token = getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Response interceptor to handle 401 errors (unauthorized)
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Token is invalid or expired - clear it
-      removeToken();
-      // Dispatch a custom event that can be listened to by the app
-      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
-    }
-    return Promise.reject(error);
-  }
-);
-
 export const getMovies = async (params = {}) => {
   const response = await api.get('/api/movies', {
     params,
@@ -89,16 +60,6 @@ export const getMovies = async (params = {}) => {
 
 export const getStats = async () => {
   const response = await api.get('/api/movies/stats');
-  return response.data;
-};
-
-export const getSettings = async () => {
-  const response = await api.get('/api/user/settings');
-  return response.data;
-};
-
-export const saveSettings = async (body) => {
-  const response = await api.put('/api/user/settings', body);
   return response.data;
 };
 
@@ -267,73 +228,14 @@ export const processTrackedLists = async () => {
   return response.data;
 };
 
-export const exportProfile = async (includeTmdbData = true, preferences = {}) => {
-  // Export profile downloads a ZIP file, so we need to handle it differently
-  const response = await api.post(
-    '/api/export-profile',
-    {
-      include_tmdb_data: includeTmdbData,
-      preferences: preferences,
-    },
-    {
-      responseType: 'blob', // Important for binary data
-    }
-  );
-
-  // Get filename from Content-Disposition header or generate one
-  const contentDisposition = response.headers['content-disposition'];
-  let filename = 'profile-export.zip';
-  if (contentDisposition) {
-    // Handle both quoted and unquoted filenames
-    const filenameMatch = contentDisposition.match(/filename="([^"]+)"|filename=([^;\s]+)/);
-    if (filenameMatch) {
-      filename = filenameMatch[1] || filenameMatch[2];
-    }
-  }
-
-  // Create blob and trigger download
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  link.parentNode.removeChild(link);
-  window.URL.revokeObjectURL(url);
-
-  return { success: true, filename };
-};
-
-export const importProfile = async (file) => {
-  // Import profile uploads a ZIP file
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const response = await api.post('/api/import-profile', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-
-  return response.data;
-};
-
 export const previewCSV = async (file) => {
   const formData = new FormData();
   formData.append('file', file);
-  // Create a new axios instance without default Content-Type header for FormData
-  // axios will automatically set multipart/form-data with boundary when it detects FormData
-  const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-  const token = getToken();
-  
+
   try {
     const response = await fetch(`${API_BASE_URL}/api/preview-csv`, {
       method: 'POST',
       body: formData,
-      credentials: 'include',
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
       // Don't set Content-Type - browser will set it with boundary automatically
     });
 
@@ -351,9 +253,8 @@ export const previewCSV = async (file) => {
 
     return await response.json();
   } catch (error) {
-    // Handle network errors (CORS, connection refused, etc.)
     if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      throw new Error(`Failed to connect to backend at ${API_BASE_URL}. Please check CORS configuration and ensure the backend is running.`);
+      throw new Error(`Failed to connect to backend at ${API_BASE_URL}. Make sure the backend is running.`);
     }
     throw error;
   }
@@ -364,15 +265,9 @@ export const processCSVWithSelections = async (file, selections) => {
   formData.append('file', file);
   formData.append('selections', JSON.stringify(selections));
 
-  // Returns a fetch response for streaming
-  const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-  const token = getToken();
   return fetch(`${API_BASE_URL}/api/process-csv-with-selections`, {
     method: 'POST',
     body: formData,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
   });
 };
 

@@ -8,4 +8,3 @@ export { useSettings } from './useSettings';
 export { useSorting } from './useSorting';
 export { useFilters } from './useFilters';
 export { useMovies } from './useMovies';
-export { useAuth, AuthProvider } from './useAuth';

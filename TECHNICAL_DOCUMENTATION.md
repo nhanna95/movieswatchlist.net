@@ -26,7 +26,7 @@ Movies Watchlist is a full-stack web application for managing movie collections 
 - Python 3.8+
 - FastAPI (Web framework)
 - SQLAlchemy (ORM)
-- SQLite (Database, configurable to PostgreSQL)
+- SQLite (Database, stored locally in `backend/watchlist.db`)
 - Pandas (CSV processing)
 - Uvicorn (ASGI server)
 - Requests (HTTP client for TMDb API)
@@ -81,7 +81,6 @@ graph LR
         M --> P[CSV Parser]
         M --> Q[TMDb Client]
         M --> R[List Processor]
-        M --> S[Profile Export]
     end
 ```
 
@@ -101,7 +100,6 @@ backend/
 ├── tmdb_client.py       # TMDb API client wrapper
 ├── csv_parser.py        # CSV parsing logic
 ├── list_processor.py    # Tracked lists matching
-├── profile_export.py    # Profile export/import
 ├── utils.py             # Utility functions
 └── requirements.txt     # Python dependencies
 ```
@@ -334,20 +332,6 @@ The routes file contains all API endpoints organized by functionality:
 3. Fallback to normalized title+year match
 4. Update movie's tracked list columns
 
-#### 7. Profile Export/Import
-
-**POST `/api/export-profile`**
-- Exports entire profile to ZIP file
-- Includes movies, favorite directors, seen countries, preferences
-- Option to include/exclude TMDb data
-- Returns ZIP file download
-
-**POST `/api/import-profile`**
-- Imports profile from ZIP file
-- Clears existing database
-- Streams import progress
-- Handles errors gracefully (continues on failure)
-
 ### TMDb Client
 
 **File: `tmdb_client.py`**
@@ -409,34 +393,6 @@ class TMDbClient:
 1. **URI Matching**: Normalize and compare URIs (primary method)
 2. **Title+Year Matching**: Normalize titles and match by year (fallback)
 3. **Normalization**: Removes "The", "A", "An" prefixes, special characters
-
-### Profile Export/Import
-
-**File: `profile_export.py`**
-
-**Functions:**
-- `export_profile_to_json()`: Builds JSON structure from database
-- `create_profile_zip()`: Creates ZIP file with profile JSON
-- `extract_profile_zip()`: Extracts and parses ZIP file
-- `import_profile_from_json()`: Imports movies from JSON
-- `import_profile_from_json_stream()`: Streams import with progress
-
-**Export Format:**
-```json
-{
-  "version": "1.0",
-  "export_date": "2026-01-25T12:00:00Z",
-  "metadata": {
-    "total_movies": 1000,
-    "favorite_movies_count": 50,
-    "includes_tmdb_data": true
-  },
-  "movies": [...],
-  "favorite_directors": [...],
-  "seen_countries": [...],
-  "preferences": {...}
-}
-```
 
 ---
 
@@ -608,8 +564,6 @@ frontend/
 - `searchTmdbMovie(title, year)`: Searches TMDb
 - `previewCSV(file)`: Previews CSV before import
 - `processCSVWithSelections(file, selections)`: Processes CSV
-- `exportProfile()`: Exports profile as ZIP
-- `importProfile(file)`: Imports profile from ZIP
 
 **Params Serialization:**
 - Uses `qs` library with `arrayFormat: 'repeat'`
@@ -833,12 +787,11 @@ erDiagram
 
 ### Base URL
 
-- Development: `http://localhost:8000`
-- Production: Configured via environment
+- `http://localhost:8000`
 
 ### Authentication
 
-Currently none (single-user application). Can be extended with JWT or session-based auth.
+None — single-user local application.
 
 ### Response Format
 
@@ -906,10 +859,6 @@ Currently none (single-user application). Can be extended with JWT or session-ba
 
 #### Tracked Lists
 - `POST /api/movies/process-tracked-lists` - Process tracked lists
-
-#### Profile
-- `POST /api/export-profile` - Export profile (ZIP)
-- `POST /api/import-profile` - Import profile (ZIP)
 
 #### Cache
 - `POST /api/movies/recache` - Recache movies
@@ -1121,28 +1070,6 @@ GROUP BY year
 ORDER BY year DESC
 ```
 
-### Profile Export/Import Feature
-
-**Export Process:**
-1. Query all movies, favorite directors, seen countries
-2. Build JSON structure
-3. Create ZIP file
-4. Return as download
-
-**Import Process:**
-1. Extract ZIP file
-2. Parse JSON
-3. Clear existing database
-4. Import movies (with progress streaming)
-5. Import favorite directors
-6. Import seen countries
-7. Reprocess movies missing TMDb data (if minimal export)
-
-**Error Handling:**
-- Continues on individual movie failures
-- Logs errors for review
-- Returns summary with success/failure counts
-
 ---
 
 ## Data Flow
@@ -1249,9 +1176,7 @@ sequenceDiagram
 
 ---
 
-## Deployment
-
-### Development Setup
+## Running Locally
 
 **Backend:**
 ```bash
@@ -1270,71 +1195,15 @@ npm install
 npm start
 ```
 
-### Production Build
-
-**Frontend:**
-```bash
-cd frontend
-npm run build
-# Output in frontend/build/
-```
-
-**Backend:**
-- Run with production ASGI server (Gunicorn + Uvicorn workers)
-- Configure reverse proxy (nginx/Apache)
-- Set up environment variables
-- Configure database (PostgreSQL recommended for production)
-
 ### Environment Variables
 
-**Backend (.env):**
+**Backend (`.env`):**
 ```env
 TMDB_API_KEY=your_api_key_here
-DATABASE_URL=sqlite:///./watchlist.db  # or postgresql://...
+DATABASE_URL=sqlite:///./watchlist.db  # optional; defaults to this
 ```
 
-**Frontend (.env):**
-```env
-REACT_APP_API_URL=http://localhost:8000  # or production URL
-```
-
-### Production Configuration
-
-**Recommended Setup:**
-- **Web Server**: nginx or Apache
-- **Application Server**: Gunicorn with Uvicorn workers
-- **Database**: PostgreSQL (for production)
-- **Static Files**: Serve from `frontend/build/`
-- **API Proxy**: Proxy `/api/*` to backend
-
-**nginx Configuration Example:**
-```nginx
-server {
-    listen 80;
-    server_name movieswatchlist.com;
-    
-    # Serve static files
-    location / {
-        root /path/to/frontend/build;
-        try_files $uri $uri/ /index.html;
-    }
-    
-    # Proxy API requests
-    location /api {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-### Database Migration
-
-**For Production:**
-1. Use PostgreSQL instead of SQLite
-2. Set `DATABASE_URL=postgresql://user:pass@host/dbname`
-3. Run migrations on first startup
-4. Backup database regularly
+The SQLite database file lives at `backend/watchlist.db` and is created automatically on first run.
 
 ---
 
@@ -1426,10 +1295,10 @@ This documentation provides a comprehensive overview of the Movies Watchlist app
 - **Robust Backend**: FastAPI with SQLAlchemy, dynamic migrations, comprehensive filtering
 - **Modern Frontend**: React with custom hooks, advanced filtering UI, responsive design
 - **External Integration**: TMDb API for rich movie metadata
-- **Data Management**: CSV import, profile export/import, tracked lists
+- **Data Management**: CSV import, movie export (CSV/JSON/Markdown/Letterboxd), tracked lists
 - **User Experience**: Keyboard shortcuts, statistics, streaming availability
 
-For questions or contributions, refer to the main README.md and TESTING_PROTOCOL.md files.
+For questions or contributions, refer to the main README.md.
 
 ---
 

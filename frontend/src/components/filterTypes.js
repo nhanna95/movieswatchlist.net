@@ -6,6 +6,7 @@ export { getLanguageName, languageNames };
 // Mapping from CSV filename (without .csv) to human-readable list name
 export const trackedListNames = {
   'letterboxd-t250': "Letterboxd's Top 250",
+  'letterboxd-t500': "Letterboxd's Top 500",
   'imdb-t250': "IMDb's Top 250",
   'ss-t250': "Sight and Sound's Top 250",
   'best-picture': "Oscar's Best Picture Winners",

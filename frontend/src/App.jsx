@@ -13,8 +13,6 @@ import { getDefaultColumns } from './components/ColumnCustomizer';
 import SettingsModal from './components/SettingsModal';
 import AddMovieModal from './components/AddMovieModal';
 import HelpModal from './components/HelpModal';
-import AuthGuard from './components/AuthGuard';
-import { AuthProvider, useAuth } from './hooks/useAuth';
 import {
   getMovies,
   getStats,
@@ -24,94 +22,15 @@ import {
   clearCache,
   processTrackedLists,
   setMovieFavorite,
-  exportProfile,
   exportMovies,
   deleteMovie,
   processCSVWithSelections,
   getFavoriteDirectors,
-  getSettings,
-  saveSettings,
 } from './services/api';
-import { getToken } from './services/auth';
 import { filterTypes } from './components/filterTypes';
 import { formatRuntime } from './utils';
 import { detectCountry, setStoredCountry, getStoredCountry } from './utils/countryDetection';
 import './components/UploadCSV.css';
-
-// LogoutButton / Login button - in guest mode shows "Login", otherwise logout
-const LogoutButton = ({ setShowAuthModal }) => {
-  const { logout, exitGuestMode, guestMode, user } = useAuth();
-
-  const handleLogout = async () => {
-    const message = guestMode
-      ? 'Exit guest mode? Your data will not be saved.'
-      : 'Are you sure you want to log out?';
-    if (window.confirm(message)) {
-      if (guestMode) {
-        await exitGuestMode();
-      } else {
-        await logout();
-      }
-    }
-  };
-
-  if (guestMode && setShowAuthModal) {
-    return (
-      <button
-        type="button"
-        className="logout-button login-button-guest"
-        onClick={() => setShowAuthModal(true)}
-        title="Login to save your list"
-        aria-label="Login"
-      >
-        Login
-      </button>
-    );
-  }
-
-  const title = user ? `Logout (${user.username})` : 'Logout';
-  return (
-    <button
-      className="logout-button"
-      onClick={handleLogout}
-      title={title}
-      aria-label="Logout"
-    >
-      <svg
-        width="24"
-        height="24"
-        viewBox="0 0 24 24"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        <path
-          d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <polyline
-          points="16,17 21,12 16,7"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <line
-          x1="21"
-          y1="12"
-          x2="9"
-          y2="12"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </button>
-  );
-};
 
 // CSVPreviewModal Component
 const CSVPreviewModal = ({ previewData, initialSelections, file, onClose, onUploadSuccess }) => {
@@ -678,8 +597,6 @@ const ImportExportModal = ({
   onUploadSuccess,
   onClearCache,
   onProcessTrackedLists,
-  onExportProfile,
-  onImportProfile,
   filters,
   sorts,
   search,
@@ -689,35 +606,12 @@ const ImportExportModal = ({
   countryCode = 'US',
   preferredServices = [],
 }) => {
-  const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
-  const [includeTmdbData, setIncludeTmdbData] = useState(true);
-  const [exportLoading, setExportLoading] = useState(false);
   const [exportMoviesOpen, setExportMoviesOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
   const [exportColumns, setExportColumns] = useState('title,year,director,runtime,genres');
   const [exportIncludeNotes, setExportIncludeNotes] = useState(true);
   const [exportMoviesLoading, setExportMoviesLoading] = useState(false);
   const [refreshingTrackedLists, setRefreshingTrackedLists] = useState(false);
-  const [importProcessing, setImportProcessing] = useState(false);
-  const [importProgress, setImportProgress] = useState({
-    current: 0,
-    total: 0,
-    processed: 0,
-    failed: 0,
-    message: null,
-  });
-  const [importMessage, setImportMessage] = useState(null);
-  const [importError, setImportError] = useState(null);
-  const [isProcessingTmdb, setIsProcessingTmdb] = useState(false);
-  const [importDragActive, setImportDragActive] = useState(false);
-  const importFileInputRef = useRef(null);
-  const importProgressRef = useRef({
-    current: 0,
-    total: 0,
-    processed: 0,
-    failed: 0,
-    message: null,
-  });
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -726,163 +620,11 @@ const ImportExportModal = ({
         onClose();
       }
     };
-
-    // Add event listener when modal is open
     document.addEventListener('keydown', handleEscape);
-
-    // Cleanup: remove event listener when modal closes
     return () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [onClose]);
-
-  const handleExportClick = async () => {
-    setExportLoading(true);
-    try {
-      await onExportProfile(includeTmdbData);
-      setExportOptionsOpen(false);
-    } catch (error) {
-      console.error('Error exporting profile:', error);
-      if (addToast) {
-        addToast(
-          'Error exporting profile: ' + (error.response?.data?.detail || error.message),
-          'error'
-        );
-      }
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
-  const handleImportClick = () => {
-    if (importFileInputRef.current && !importProcessing) {
-      importFileInputRef.current.click();
-    }
-  };
-
-  const handleImportDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setImportDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setImportDragActive(false);
-    }
-  };
-
-  const handleImportDrop = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setImportDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-
-      // Validate file type
-      if (!file.name.endsWith('.zip')) {
-        if (addToast) {
-          addToast('Please select a ZIP file', 'error');
-        }
-        return;
-      }
-
-      // Show confirmation dialog
-      if (showConfirm) {
-        const confirmed = await showConfirm(
-          'Importing a profile will permanently delete all current movies and replace them with the imported data. This action cannot be undone. Do you want to continue?',
-          'Confirm Profile Import'
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-
-      // Set file to input
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      if (importFileInputRef.current) {
-        importFileInputRef.current.files = dataTransfer.files;
-      }
-
-      // Trigger file selection handler
-      handleImportFileSelected({ target: { files: [file] } });
-    }
-  };
-
-  const handleImportFileSelected = async (event) => {
-    const file = event.target.files[0];
-    if (!file) {
-      return;
-    }
-
-    // Validate file type
-    if (!file.name.endsWith('.zip')) {
-      if (addToast) {
-        addToast('Please select a ZIP file', 'error');
-      }
-      return;
-    }
-
-    // Show confirmation dialog
-    if (showConfirm) {
-      const confirmed = await showConfirm(
-        'Importing a profile will permanently delete all current movies and replace them with the imported data. This action cannot be undone. Do you want to continue?',
-        'Confirm Profile Import'
-      );
-      if (!confirmed) {
-        // Reset file input if user cancelled
-        if (importFileInputRef.current) {
-          importFileInputRef.current.value = '';
-        }
-        return;
-      }
-    }
-
-    // Reset state
-    setImportProcessing(true);
-    setIsProcessingTmdb(false);
-    setImportError(null);
-    setImportMessage(null);
-    setImportProgress({ current: 0, total: 0, processed: 0, failed: 0, message: null });
-
-    try {
-      await onImportProfile(file, {
-        onProgress: (progress) => {
-          // Update ref and state
-          importProgressRef.current = progress;
-          setImportProgress(progress);
-        },
-        onImportComplete: (result) => {
-          // Import complete, now processing TMDB data if needed
-        },
-        onSetProcessingTmdb: (isProcessing) => setIsProcessingTmdb(isProcessing),
-        onComplete: (result) => {
-          setImportProcessing(false);
-          setImportMessage(
-            `Successfully imported ${result.movies_imported} movies.${result.tmdb_data_fetched > 0 ? ` Fetched TMDB data for ${result.tmdb_data_fetched} movies.` : ''}`
-          );
-          // Close modal and trigger reload immediately
-          onClose();
-          if (onUploadSuccess) {
-            onUploadSuccess();
-          }
-        },
-        onError: (error) => {
-          setImportProcessing(false);
-          setImportError(error);
-        },
-      });
-    } catch (error) {
-      console.error('Error importing profile:', error);
-      setImportProcessing(false);
-      setImportError('Error importing profile: ' + (error.response?.data?.detail || error.message));
-    } finally {
-      // Reset file input
-      if (importFileInputRef.current) {
-        importFileInputRef.current.value = '';
-      }
-    }
-  };
 
   const handleExportMovies = async () => {
     setExportMoviesLoading(true);
@@ -1114,253 +856,6 @@ const ImportExportModal = ({
           <UploadCSV onUploadSuccess={onUploadSuccess} onShowPreview={onShowPreview} />
 
           <div className="cache-control" style={{ marginTop: '2rem' }}>
-            <h2>Import Profile</h2>
-            <p className="cache-description">
-              Import a previously exported profile ZIP file. This will replace all current movies
-              and restore your preferences
-            </p>
-            <input
-              ref={importFileInputRef}
-              type="file"
-              accept=".zip"
-              style={{ display: 'none' }}
-              onChange={handleImportFileSelected}
-            />
-            {!importProcessing && (
-              <div
-                className={`upload-dropzone ${importDragActive ? 'drag-active' : ''}`}
-                onDragEnter={handleImportDrag}
-                onDragLeave={handleImportDrag}
-                onDragOver={handleImportDrag}
-                onDrop={handleImportDrop}
-                onClick={handleImportClick}
-                style={{ marginBottom: '1rem' }}
-              >
-                {importDragActive ? (
-                  <div className="dropzone-content">
-                    <p>Drop ZIP file here</p>
-                  </div>
-                ) : (
-                  <div className="dropzone-content">
-                    <svg
-                      width="48"
-                      height="48"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <p>Drag & drop ZIP file here or click to browse</p>
-                    <p className="dropzone-hint">Supports .zip files</p>
-                  </div>
-                )}
-              </div>
-            )}
-            {importProcessing && isProcessingTmdb && (
-              <div>
-                <div style={{ marginBottom: '1rem' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: '0.5rem',
-                    }}
-                  >
-                    <span>Processing TMDB data...</span>
-                    <span>
-                      {importProgress.current} / {importProgress.total}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: '20px',
-                      backgroundColor: 'var(--bg-tertiary, #f0f0f0)',
-                      borderRadius: '4px',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%`,
-                        height: '100%',
-                        backgroundColor: 'var(--success)',
-                        transition: 'width 0.3s ease',
-                      }}
-                    />
-                  </div>
-                  <div
-                    style={{
-                      marginTop: '0.5rem',
-                      fontSize: '0.85rem',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    Processed: {importProgress.processed} | Failed: {importProgress.failed}
-                  </div>
-                </div>
-              </div>
-            )}
-            {importProcessing && !isProcessingTmdb && !importMessage && (
-              <div>
-                <div style={{ marginBottom: '1rem' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: '0.5rem',
-                    }}
-                  >
-                    <span>{importProgress.message || 'Importing profile...'}</span>
-                    {importProgress.total > 0 && (
-                      <span>
-                        {importProgress.current} / {importProgress.total}
-                      </span>
-                    )}
-                  </div>
-                  {importProgress.total > 0 && (
-                    <>
-                      <div
-                        style={{
-                          width: '100%',
-                          height: '20px',
-                          backgroundColor: 'var(--bg-tertiary, #f0f0f0)',
-                          borderRadius: '4px',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${(importProgress.current / importProgress.total) * 100}%`,
-                            height: '100%',
-                            backgroundColor: 'var(--primary, #007bff)',
-                            transition: 'width 0.3s ease',
-                          }}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          marginTop: '0.5rem',
-                          fontSize: '0.85rem',
-                          color: 'var(--text-secondary)',
-                        }}
-                      >
-                        Processed: {importProgress.processed} | Failed: {importProgress.failed}
-                      </div>
-                    </>
-                  )}
-                  {importProgress.total === 0 && importProgress.message && (
-                    <div
-                      style={{
-                        padding: '0.5rem',
-                        backgroundColor: 'var(--bg-secondary, #f5f5f5)',
-                        borderRadius: '4px',
-                        fontSize: '0.9rem',
-                        color: 'var(--text-secondary)',
-                      }}
-                    >
-                      {importProgress.message}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {importMessage && (
-              <div
-                style={{
-                  padding: '0.75rem',
-                  backgroundColor: 'var(--success-light)',
-                  color: 'var(--success)',
-                  borderRadius: '4px',
-                  marginTop: '1rem',
-                }}
-              >
-                {importMessage}
-              </div>
-            )}
-            {importError && (
-              <div
-                style={{
-                  padding: '0.75rem',
-                  backgroundColor: 'var(--danger-light)',
-                  color: 'var(--danger)',
-                  borderRadius: '4px',
-                  marginTop: '1rem',
-                }}
-              >
-                {importError}
-              </div>
-            )}
-          </div>
-
-          <div className="cache-control" style={{ marginTop: '2rem' }}>
-            <h2>Export Profile</h2>
-            <p className="cache-description">
-              Export your complete profile including all movies, favorites, sorting, filters, and
-              preferences to a ZIP file
-            </p>
-            <div
-              style={{ position: 'relative', display: 'block', width: '100%', marginTop: '1rem' }}
-            >
-              <button
-                onClick={() => setExportOptionsOpen(!exportOptionsOpen)}
-                className="upload-button"
-                disabled={exportLoading}
-                style={{ width: '100%' }}
-              >
-                {exportLoading ? 'Exporting...' : 'Export Profile'}
-              </button>
-              {exportOptionsOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    marginTop: '0.5rem',
-                    padding: '1rem',
-                    backgroundColor: 'var(--modal-bg, white)',
-                    border: '1px solid var(--border-color, #ddd)',
-                    borderRadius: '4px',
-                    zIndex: 1000,
-                    minWidth: '200px',
-                  }}
-                >
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      marginBottom: '1rem',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={includeTmdbData}
-                      onChange={(e) => setIncludeTmdbData(e.target.checked)}
-                    />
-                    <span>Include TMDB data</span>
-                  </label>
-                  <button
-                    onClick={handleExportClick}
-                    className="upload-button"
-                    disabled={exportLoading}
-                    style={{ width: '100%' }}
-                  >
-                    {exportLoading ? 'Exporting...' : 'Download'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="cache-control" style={{ marginTop: '2rem' }}>
             <h2>Export Movies</h2>
             <p className="cache-description">
               Export filtered movies in CSV, JSON, Markdown, or Letterboxd format
@@ -1553,9 +1048,7 @@ const ImportExportModal = ({
   );
 };
 
-function App({ setShowAuthModal }) {
-  const { user, logout, exitGuestMode, guestMode } = useAuth();
-
+function App() {
   // Get system theme preference
   const getSystemTheme = useCallback(() => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -2135,14 +1628,11 @@ function App({ setShowAuthModal }) {
   });
 
   const paginationRef = useRef(pagination);
-  const importReaderRef = useRef(null);
   const sortsRef = useRef(sorts);
   const filtersRef = useRef(filters);
   const searchRef = useRef(search);
   const loadMoviesRequestIdRef = useRef(0);
   const isUpdatingFavoriteRef = useRef(false);
-  const skipNextSaveRef = useRef(false);
-  const [settingsSaveTrigger, setSettingsSaveTrigger] = useState(0);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -2160,218 +1650,6 @@ function App({ setShowAuthModal }) {
   useEffect(() => {
     searchRef.current = search;
   }, [search]);
-
-  // Apply preferences from server or import to state and localStorage (shared with import flow)
-  const applyPreferences = useCallback(
-    (prefs) => {
-      if (!prefs || typeof prefs !== 'object') return;
-      if (prefs.theme) {
-        localStorage.setItem('theme', prefs.theme);
-        setTheme(prefs.theme);
-      }
-      if (prefs.viewMode) {
-        localStorage.setItem('viewMode', prefs.viewMode);
-        setViewMode(prefs.viewMode);
-      }
-      if (prefs.streaming_country_code) {
-        setStoredCountry(prefs.streaming_country_code);
-        setCountryCode(prefs.streaming_country_code);
-      }
-      if (prefs.preferred_streaming_services != null) {
-        const arr = Array.isArray(prefs.preferred_streaming_services)
-          ? prefs.preferred_streaming_services
-          : [];
-        localStorage.setItem('preferred_streaming_services', JSON.stringify(arr));
-        setPreferredServices(arr);
-      }
-      if (prefs.stats_customization_settings != null) {
-        localStorage.setItem(
-          'stats_customization_settings',
-          JSON.stringify(prefs.stats_customization_settings)
-        );
-        setStatsSettings(prefs.stats_customization_settings);
-      }
-      if (prefs.columnsExpanded) {
-        localStorage.setItem('columnsExpanded', JSON.stringify(prefs.columnsExpanded));
-        setColumnsExpanded(prefs.columnsExpanded);
-      }
-      if (prefs.defaultSorts) {
-        localStorage.setItem('defaultSorts', JSON.stringify(prefs.defaultSorts));
-        setDefaultSorts(prefs.defaultSorts);
-      }
-      if (prefs.defaultShowFavoritesFirst !== undefined) {
-        localStorage.setItem(
-          'defaultShowFavoritesFirst',
-          prefs.defaultShowFavoritesFirst.toString()
-        );
-        setDefaultShowFavoritesFirst(prefs.defaultShowFavoritesFirst);
-      }
-      if (prefs.currentSorts) {
-        const newSorts = JSON.parse(JSON.stringify(prefs.currentSorts));
-        setSorts(newSorts);
-        sortsRef.current = newSorts;
-        localStorage.setItem('currentSorts', JSON.stringify(newSorts));
-      }
-      if (prefs.currentShowFavoritesFirst !== undefined) {
-        setShowFavoritesFirst(prefs.currentShowFavoritesFirst);
-      }
-      if (prefs.currentFilters) {
-        const newFilters = JSON.parse(JSON.stringify(prefs.currentFilters));
-        filtersRef.current = newFilters;
-        setFilters(newFilters);
-        localStorage.setItem('currentFilters', JSON.stringify(newFilters));
-      }
-      if (prefs.defaultFilters != null) {
-        localStorage.setItem('defaultFilters', JSON.stringify(prefs.defaultFilters));
-      }
-      if (prefs.currentSearch != null) {
-        const searchVal = prefs.currentSearch ?? '';
-        searchRef.current = searchVal;
-        setSearch(searchVal);
-        localStorage.setItem('currentSearch', prefs.currentSearch);
-      }
-      if (prefs.filterPresets) {
-        localStorage.setItem('filterPresets', JSON.stringify(prefs.filterPresets));
-        window.dispatchEvent(new CustomEvent('filterPresetsLoaded', { detail: prefs.filterPresets }));
-      }
-      if (prefs.searchHistory) {
-        localStorage.setItem('searchHistory', JSON.stringify(prefs.searchHistory));
-        setSearchHistory(prefs.searchHistory);
-      }
-    },
-    []
-  );
-
-  // Load user settings from server when user is set (login or page refresh with token)
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    getSettings()
-      .then((prefs) => {
-        if (!cancelled && prefs && typeof prefs === 'object' && Object.keys(prefs).length > 0) {
-          skipNextSaveRef.current = true;
-          applyPreferences(prefs);
-          window.dispatchEvent(new CustomEvent('userSettingsLoaded'));
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) console.warn('Failed to load user settings:', err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [user, applyPreferences]);
-
-  // When FilterBar updates presets (save/edit/delete), trigger debounced save and save immediately
-  // (immediate save so presets persist even if user leaves before the 1.5s debounce)
-  useEffect(() => {
-    const handler = () => {
-      setSettingsSaveTrigger((prev) => prev + 1);
-      if (!user) return;
-      let filterPresets = [];
-      try {
-        const saved = localStorage.getItem('filterPresets');
-        if (saved) filterPresets = JSON.parse(saved);
-      } catch (_) {}
-      const blob = {
-        theme: theme || 'system',
-        viewMode: viewMode || 'expanded',
-        streaming_country_code: getStoredCountry() || 'US',
-        preferred_streaming_services: preferredServices || [],
-        stats_customization_settings: statsSettings || {},
-        defaultSorts: defaultSorts || [],
-        currentSorts: sorts || [],
-        showFavoritesFirst: showFavoritesFirst,
-        defaultShowFavoritesFirst: defaultShowFavoritesFirst,
-        columnsExpanded: columnsExpanded || getDefaultColumns('expanded'),
-        currentFilters: filters || [],
-        defaultFilters: (() => {
-          try {
-            const s = localStorage.getItem('defaultFilters');
-            return s ? JSON.parse(s) : [];
-          } catch (_) {
-            return [];
-          }
-        })(),
-        currentSearch: search ?? '',
-        searchHistory: searchHistory || [],
-        filterPresets,
-      };
-      saveSettings(blob).catch((err) => console.warn('Failed to save user settings:', err));
-    };
-    window.addEventListener('filterPresetsChanged', handler);
-    return () => window.removeEventListener('filterPresetsChanged', handler);
-  }, [
-    user,
-    theme,
-    viewMode,
-    defaultSorts,
-    sorts,
-    showFavoritesFirst,
-    defaultShowFavoritesFirst,
-    columnsExpanded,
-    filters,
-    search,
-    searchHistory,
-    preferredServices,
-    statsSettings,
-  ]);
-
-  // Persist preferences to server when they change (debounced; skip first run after load from server)
-  const SAVE_SETTINGS_DEBOUNCE_MS = 1500;
-  useEffect(() => {
-    if (!user) return;
-    const timeoutId = setTimeout(() => {
-      if (skipNextSaveRef.current) {
-        skipNextSaveRef.current = false;
-        return;
-      }
-      let filterPresets = [];
-      try {
-        const saved = localStorage.getItem('filterPresets');
-        if (saved) filterPresets = JSON.parse(saved);
-      } catch (_) {}
-      let defaultFilters = [];
-      try {
-        const saved = localStorage.getItem('defaultFilters');
-        if (saved) defaultFilters = JSON.parse(saved);
-      } catch (_) {}
-      const blob = {
-        theme: theme || 'system',
-        viewMode: viewMode || 'expanded',
-        streaming_country_code: getStoredCountry() || 'US',
-        preferred_streaming_services: preferredServices || [],
-        stats_customization_settings: statsSettings || {},
-        defaultSorts: defaultSorts || [],
-        currentSorts: sorts || [],
-        showFavoritesFirst: showFavoritesFirst,
-        defaultShowFavoritesFirst: defaultShowFavoritesFirst,
-        columnsExpanded: columnsExpanded || getDefaultColumns('expanded'),
-        currentFilters: filters || [],
-        defaultFilters,
-        currentSearch: search ?? '',
-        searchHistory: searchHistory || [],
-        filterPresets,
-      };
-      saveSettings(blob).catch((err) => console.warn('Failed to save user settings:', err));
-    }, SAVE_SETTINGS_DEBOUNCE_MS);
-    return () => clearTimeout(timeoutId);
-  }, [
-    user,
-    theme,
-    viewMode,
-    defaultSorts,
-    sorts,
-    showFavoritesFirst,
-    defaultShowFavoritesFirst,
-    columnsExpanded,
-    filters,
-    search,
-    searchHistory,
-    preferredServices,
-    statsSettings,
-    settingsSaveTrigger,
-  ]);
 
   const loadMovies = useCallback(
     async (reset = true) => {
@@ -2731,18 +2009,15 @@ function App({ setShowAuthModal }) {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
     loadMovies(true);
-  }, [user, sorts, filters, search, loadMovies]);
+  }, [sorts, filters, search, loadMovies]);
 
   useEffect(() => {
-    if (!user) return;
     loadStats();
-  }, [user, loadStats]);
+  }, [loadStats]);
 
-  // Load favorite directors when user is set
+  // Load favorite directors on mount
   useEffect(() => {
-    if (!user) return;
     const fetchFavoriteDirectors = async () => {
       try {
         const data = await getFavoriteDirectors();
@@ -2752,7 +2027,7 @@ function App({ setShowAuthModal }) {
       }
     };
     fetchFavoriteDirectors();
-  }, [user]);
+  }, []);
 
   // Infinite scroll detection and scroll-to-top button visibility
   useEffect(() => {
@@ -3169,279 +2444,6 @@ function App({ setShowAuthModal }) {
     }
   };
 
-  const handleExportProfile = async (includeTmdbData) => {
-    // Collect preferences from localStorage
-    const preferences = {
-      theme: localStorage.getItem('theme') || 'system',
-      viewMode: localStorage.getItem('viewMode') || 'expanded',
-      columnsExpanded: (() => {
-        try {
-          const saved = localStorage.getItem('columnsExpanded');
-          return saved ? JSON.parse(saved) : getDefaultColumns('expanded');
-        } catch (e) {
-          return getDefaultColumns('expanded');
-        }
-      })(),
-      defaultSorts: (() => {
-        try {
-          const saved = localStorage.getItem('defaultSorts');
-          return saved ? JSON.parse(saved) : defaultSorts;
-        } catch (e) {
-          return defaultSorts;
-        }
-      })(),
-      defaultShowFavoritesFirst: localStorage.getItem('defaultShowFavoritesFirst') === 'true',
-      currentSorts: sorts || [],
-      currentShowFavoritesFirst: showFavoritesFirst,
-      currentFilters: filters || [],
-      defaultFilters: (() => {
-        try {
-          const saved = localStorage.getItem('defaultFilters');
-          return saved ? JSON.parse(saved) : [];
-        } catch (e) {
-          return [];
-        }
-      })(),
-      filterPresets: (() => {
-        try {
-          const saved = localStorage.getItem('filterPresets');
-          return saved ? JSON.parse(saved) : [];
-        } catch (e) {
-          return [];
-        }
-      })(),
-      searchHistory: (() => {
-        try {
-          const saved = localStorage.getItem('searchHistory');
-          return saved ? JSON.parse(saved) : [];
-        } catch (e) {
-          return [];
-        }
-      })(),
-      streaming_country_code: getStoredCountry() || 'US',
-      preferred_streaming_services: preferredServices || [],
-      stats_customization_settings: statsSettings || {},
-    };
-
-    await exportProfile(includeTmdbData, preferences);
-  };
-
-  const handleImportProfile = async (
-    file,
-    callbacks = {},
-    loadMoviesFn = null,
-    loadStatsFn = null
-  ) => {
-    const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      let response;
-      const token = getToken();
-      try {
-        response = await fetch(`${API_BASE_URL}/api/import-profile`, {
-          method: 'POST',
-          body: formData,
-          credentials: 'include',
-          headers: {
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          // Don't set Content-Type - browser will set it with boundary automatically
-        });
-      } catch (fetchError) {
-        // Handle network errors (CORS, connection refused, etc.)
-        if (fetchError.name === 'TypeError' && (fetchError.message.includes('fetch') || fetchError.message.includes('Failed to fetch'))) {
-          throw new Error(`Failed to connect to backend at ${API_BASE_URL}. Please check CORS configuration and ensure the backend is running.`);
-        }
-        throw fetchError;
-      }
-
-      if (!response.ok) {
-        const text = await response.text();
-        try {
-          const json = JSON.parse(text);
-          throw new Error(json.detail || `HTTP error! status: ${response.status}`);
-        } catch (e) {
-          if (e instanceof Error && e.message.includes('HTTP error')) {
-            throw e;
-          }
-          throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
-        }
-      }
-
-      if (!response.body) {
-        throw new Error('Response body is null - server may not support streaming');
-      }
-
-      const reader = response.body.getReader();
-      importReaderRef.current = reader;
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let importResult = null;
-
-      const readStream = () => {
-        reader
-          .read()
-          .then(({ done, value }) => {
-            if (done) {
-              importReaderRef.current = null;
-              if (callbacks.onComplete && importResult) {
-                callbacks.onComplete(importResult);
-              }
-              return;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.trim() && line.startsWith('data: ')) {
-                try {
-                  const jsonStr = line.substring(6); // Remove 'data: ' prefix
-                  const data = JSON.parse(jsonStr);
-
-                  // Don't handle import phase progress - only show progress during TMDB processing
-                  // Ignore any import_phase or finalizing messages
-
-                  // Handle import completion
-                  if (data.import_complete) {
-                    importResult = {
-                      movies_imported: data.movies_imported,
-                      movies_failed: data.movies_failed,
-                      errors: data.errors,
-                      preferences: data.preferences,
-                      tmdb_data_fetched: 0,
-                    };
-
-                    // Check if TMDB processing is needed (if done is also true, no TMDB processing)
-                    if (data.done) {
-                      // No TMDB processing needed - mark as complete immediately
-                      if (callbacks.onSetProcessingTmdb) {
-                        callbacks.onSetProcessingTmdb(false);
-                      }
-                      importResult.tmdb_data_fetched = data.tmdb_data_fetched || 0;
-                      importResult.tmdb_data_failed = data.failed || 0;
-                    } else {
-                      // TMDB processing will follow
-                      if (callbacks.onSetProcessingTmdb) {
-                        callbacks.onSetProcessingTmdb(true);
-                      }
-                    }
-
-                    // Restore preferences immediately - set state and localStorage (shared applyPreferences)
-                    if (data.preferences) {
-                      applyPreferences(data.preferences);
-                    }
-
-                    if (callbacks.onImportComplete) {
-                      callbacks.onImportComplete(importResult);
-                    }
-
-                    // If done is true, complete immediately (no TMDB processing needed)
-                    // Note: loadMovies will be called automatically by useEffect when sorts/filters/search change
-                    // But we still need to call it if no preferences were restored
-                    if (data.done) {
-                      // Call loadMovies immediately (useEffect will also trigger if preferences changed)
-                      // Using setTimeout(0) to ensure it runs after all preference state updates
-                      setTimeout(() => {
-                        if (loadMoviesFn) {
-                          loadMoviesFn(true);
-                        }
-                        if (loadStatsFn) {
-                          loadStatsFn();
-                        }
-                      }, 0);
-                      // Call onComplete to close modal and show success message
-                      if (importResult && callbacks.onComplete) {
-                        callbacks.onComplete(importResult);
-                      }
-                    }
-                  }
-
-                  // Handle TMDB processing progress (only if not import phase)
-                  if (
-                    data.current !== undefined &&
-                    data.total !== undefined &&
-                    !data.done &&
-                    !data.import_phase &&
-                    !data.import_complete
-                  ) {
-                    if (callbacks.onSetProcessingTmdb) {
-                      callbacks.onSetProcessingTmdb(true);
-                    }
-                    if (callbacks.onProgress) {
-                      callbacks.onProgress({
-                        current: data.current,
-                        total: data.total,
-                        processed: data.processed || 0,
-                        failed: data.failed || 0,
-                      });
-                    }
-                  }
-
-                  // Handle completion (after TMDB processing completes)
-                  if (data.done && !data.import_complete) {
-                    if (callbacks.onSetProcessingTmdb) {
-                      callbacks.onSetProcessingTmdb(false);
-                    }
-                    // Update importResult with TMDB processing results
-                    if (importResult) {
-                      importResult.tmdb_data_fetched = data.processed || 0;
-                      importResult.tmdb_data_failed = data.failed || 0;
-                    }
-
-                    // Reload movies and stats immediately when complete
-                    // loadMovies will read from refs which have the latest filters/sorts values
-                    if (loadMoviesFn) {
-                      loadMoviesFn(true);
-                    }
-                    if (loadStatsFn) {
-                      loadStatsFn();
-                    }
-
-                    // Call onComplete to close modal and show success message
-                    if (importResult && callbacks.onComplete) {
-                      callbacks.onComplete(importResult);
-                    }
-                  }
-
-                  // Handle errors
-                  if (data.error) {
-                    if (callbacks.onError) {
-                      callbacks.onError(data.error);
-                    }
-                  }
-                } catch (e) {
-                  console.error('Error parsing SSE data:', e, line);
-                }
-              }
-            }
-
-            // Continue reading immediately - don't wait
-            readStream();
-          })
-          .catch((error) => {
-            console.error('Error reading stream:', error);
-            importReaderRef.current = null;
-            if (callbacks.onError) {
-              callbacks.onError(error.message);
-            }
-          });
-      };
-
-      // Start reading the stream immediately and continuously
-      readStream();
-    } catch (error) {
-      console.error('Error importing profile:', error);
-      if (callbacks.onError) {
-        callbacks.onError(error.message);
-      }
-      throw error;
-    }
-  };
-
   const handleClearCache = async () => {
     const confirmed = await showConfirm(
       'Are you sure you want to reset the database? This will permanently delete all movies and reset all settings to their default values.',
@@ -3738,30 +2740,10 @@ function App({ setShowAuthModal }) {
   return (
     <div className="app">
       <header className="app-header">
-        {guestMode && (
-          <div className="guest-mode-banner" role="status">
-            <span>Guest mode — data is temporary and will not be saved. Sign up to save your list.</span>
-            <button
-              type="button"
-              className="guest-mode-banner-exit"
-              onClick={async () => {
-                if (window.confirm('Exit guest mode? Your data will not be saved.')) {
-                  await exitGuestMode();
-                }
-              }}
-              aria-label="Exit guest"
-            >
-              Exit guest
-            </button>
-          </div>
-        )}
         <div className="header-content" ref={headerContainerRef}>
           <div ref={headerTitleRef}>
             <h1>movieswatchlist.net</h1>
             <p>Sort and filter your watchlist movies</p>
-            {guestMode && (
-              <span className="guest-mode-badge" title="You are using a temporary guest session">Guest</span>
-            )}
           </div>
           <div className="header-actions" ref={headerActionsRef}>
             <div
@@ -3978,7 +2960,6 @@ function App({ setShowAuthModal }) {
                   />
                 </svg>
               </button>
-              <LogoutButton setShowAuthModal={setShowAuthModal} />
             </div>
             <div
               className={`header-actions-hamburger ${!showHamburgerMenu ? 'header-actions-hidden' : ''}`}
@@ -4225,57 +3206,6 @@ function App({ setShowAuthModal }) {
                       </svg>
                       <span>Settings</span>
                     </button>
-                    <button
-                      className="hamburger-menu-item"
-                      onClick={async () => {
-                        if (guestMode && setShowAuthModal) {
-                          setShowAuthModal(true);
-                          setIsHamburgerMenuOpen(false);
-                          return;
-                        }
-                        const message = 'Are you sure you want to log out?';
-                        if (window.confirm(message)) {
-                          await logout();
-                          setIsHamburgerMenuOpen(false);
-                        }
-                      }}
-                      title={guestMode ? 'Login to save your list' : (user ? `Logout (${user.username})` : 'Logout')}
-                      aria-label={guestMode ? 'Login' : 'Logout'}
-                    >
-                      <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        <path
-                          d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <polyline
-                          points="16,17 21,12 16,7"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <line
-                          x1="21"
-                          y1="12"
-                          x2="9"
-                          y2="12"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      <span>{guestMode ? 'Login' : 'Logout'}</span>
-                    </button>
                   </div>
                 )}
               </div>
@@ -4290,10 +3220,6 @@ function App({ setShowAuthModal }) {
           onUploadSuccess={handleUploadSuccess}
           onClearCache={handleClearCache}
           onProcessTrackedLists={handleProcessTrackedLists}
-          onExportProfile={handleExportProfile}
-          onImportProfile={(file, callbacks) =>
-            handleImportProfile(file, callbacks, loadMovies, loadStats)
-          }
           filters={filters}
           sorts={sorts}
           search={search}
@@ -4674,16 +3600,4 @@ function App({ setShowAuthModal }) {
   );
 }
 
-// Wrapper component that provides authentication context
-function AppWithAuth() {
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  return (
-    <AuthProvider>
-      <AuthGuard showAuthModal={showAuthModal} setShowAuthModal={setShowAuthModal}>
-        <App setShowAuthModal={setShowAuthModal} />
-      </AuthGuard>
-    </AuthProvider>
-  );
-}
-
-export default AppWithAuth;
+export default App;

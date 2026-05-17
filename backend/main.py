@@ -1,42 +1,20 @@
-import asyncio
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import init_db, cleanup_expired_guest_schemas
+from database import init_db
 from routes import router
 import logging
-import os
+from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-
-async def _periodic_guest_cleanup():
-    """Run guest schema cleanup every hour."""
-    while True:
-        await asyncio.sleep(3600)
-        try:
-            n = cleanup_expired_guest_schemas()
-            if n:
-                logger.info(f"Periodic guest cleanup: removed {n} expired schema(s)")
-        except Exception as e:
-            logger.warning(f"Periodic guest cleanup failed: {e}")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
     logger.info("Database initialized")
-    cleanup_expired_guest_schemas()
-    task = asyncio.create_task(_periodic_guest_cleanup())
     yield
-    # Shutdown
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    # Shutdown (if needed in the future)
 
 app = FastAPI(
     title="Letterboxd Watchlist API",
@@ -45,30 +23,15 @@ app = FastAPI(
 )
 
 # Configure CORS
-# Get allowed origins from environment variable. In production (e.g. Railway) you MUST set
-# CORS_ORIGINS to your frontend URL (e.g. https://movieswatchlist-net.vercel.app) or the
-# browser will block API requests with "No 'Access-Control-Allow-Origin' header".
-cors_origins_env = os.getenv("CORS_ORIGINS", "")
-if cors_origins_env:
-    # Split comma-separated origins from environment variable
-    allowed_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
-else:
-    # Default to localhost for development only
-    allowed_origins = [
-        "http://localhost:3000",  # React dev server
-        "http://127.0.0.1:3000",  # Alternative localhost
-    ]
-
-logger.info(f"CORS allowed origins: {allowed_origins}")
-
-# Add CORS middleware BEFORE including routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[
+        "http://localhost:3000",  # React dev server
+        "http://127.0.0.1:3000",  # Alternative localhost
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Include routes
@@ -82,7 +45,7 @@ if __name__ == "__main__":
     import uvicorn
     import subprocess
     import sys
-    
+
     # Check if port 8000 is in use and kill existing processes
     try:
         result = subprocess.run(
@@ -103,5 +66,5 @@ if __name__ == "__main__":
         pass
     except Exception as e:
         logger.warning(f"Could not check/kill processes on port 8000: {e}")
-    
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
