@@ -15,3 +15,6 @@ node_modules/
 frontend/build/
 .DS_Store
 *.log
+
+# VS Code (local task definitions)
+.vscode/tasks.json
